@@ -77,6 +77,12 @@ func WithCustomHttpClient(client IHttpClient) StateOptFunc {
 	}
 }
 
+func WithCustomModbusClient(client IModbusClient) StateOptFunc {
+	return func(opts *stateOpts) {
+		opts.customModbusClient = client
+	}
+}
+
 func WithFedearationCommandHandler(handler FederationCommandHandler) StateOptFunc {
 	return func(opts *stateOpts) {
 		opts.federationCommandHandler = handler

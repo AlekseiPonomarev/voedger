@@ -17,6 +17,7 @@ type stateOpts struct {
 	federationCommandHandler FederationCommandHandler
 	federationBlobHandler    FederationBlobHandler
 	customHttpClient         IHttpClient
+	customModbusClient       IModbusClient
 	uniquesHandler           UniquesHandler
 }
 

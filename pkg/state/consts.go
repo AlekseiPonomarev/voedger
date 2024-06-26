@@ -26,6 +26,7 @@ var (
 	FederationCommand = appdef.NewQName(appdef.SysPackage, "FederationCommand")
 	FederationBlob    = appdef.NewQName(appdef.SysPackage, "FederationBlob")
 	Uniq              = appdef.NewQName(appdef.SysPackage, "Uniq")
+	Modbus            = appdef.NewQName(appdef.SysPackage, "Modbus")
 )
 
 const (

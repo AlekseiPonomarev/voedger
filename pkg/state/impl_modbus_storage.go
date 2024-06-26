@@ -8,13 +8,9 @@ import (
 	"time"
 )
 
-var (
-	Modbus = appdef.NewQName(appdef.SysPackage, "Modbus")
-)
-
-// TemperatureSensor represents a Modbus-connected temperature sensor.
+// represents a Modbus-connected device.
 type modbusStorage struct {
-	modbus modbusClient
+	modbus IModbusClient
 }
 
 type modbusClient struct {
@@ -28,6 +24,13 @@ type modBusKeyBuilder struct {
 type modbusValue struct {
 	istructs.IStateValue
 	data map[string]interface{}
+}
+
+func (mv *modbusValue) AsFloat64(key string) float64 {
+	if value, exists := mv.data[key].(float64); exists {
+		return value
+	}
+	return 0.0
 }
 
 type IModbusClient interface {
@@ -94,14 +97,13 @@ func (mc *modbusClient) Connect(ip string, port string, slaveID byte) error {
 	return mc.handler.Connect()
 }
 
-// ReadData reads the temperature from the sensor.
+// ReadData reads device registers
 func (mc *modbusClient) ReadData() (float64, float64, error) {
 	if mc.handler == nil {
 		return 0, 0, fmt.Errorf("device not connected")
 	}
 	client := modbus.NewClient(mc.handler)
 
-	//	results, err := client.ReadHoldingRegisters(0, 1)
 	results, err := client.ReadInputRegisters(1, 2)
 	if err != nil {
 		return 0, 0, err

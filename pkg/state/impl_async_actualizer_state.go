@@ -58,6 +58,10 @@ func implProvideAsyncActualizerState(ctx context.Context, appStructsFunc AppStru
 		customClient: opts.customHttpClient,
 	}, S_READ)
 
+	state.addStorage(Modbus, &modbusStorage{
+		modbus: opts.customModbusClient,
+	}, S_READ)
+
 	state.addStorage(FederationCommand, &federationCommandStorage{
 		appStructs: appStructsFunc,
 		wsid:       wsidFunc,
