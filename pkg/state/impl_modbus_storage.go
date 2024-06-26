@@ -71,6 +71,7 @@ func (mkb *modBusKeyBuilder) slaveID() byte {
 	panic("SlaveID not set")
 }
 
+// Read register from device. If client not set - create and set default
 func (ms *modbusStorage) Read(key istructs.IStateKeyBuilder, callback istructs.ValueCallback) (err error) {
 	var (
 		t, h float64
@@ -101,7 +102,7 @@ func (ms *modbusStorage) Read(key istructs.IStateKeyBuilder, callback istructs.V
 // Connect establishes a connection to the Modbus device.
 func (mc *modbusClient) Connect(ip string, port string, slaveID byte) error {
 	mc.handler = modbus.NewTCPClientHandler(fmt.Sprintf("%s:%s", ip, port))
-	mc.handler.Timeout = 3 * time.Second
+	mc.handler.Timeout = time.Second
 	mc.handler.SlaveId = slaveID
 	return mc.handler.Connect()
 }
