@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2024-present Sigma-Soft, Ltd.
+ * @author Aleksei Ponomarev
+ */
+
 package state
 
 import (

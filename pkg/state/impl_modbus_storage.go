@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2024-present Sigma-Soft, Ltd.
+ * @author Aleksei Ponomarev
+ */
+
 package state
 
 import (
@@ -71,11 +76,15 @@ func (ms *modbusStorage) Read(key istructs.IStateKeyBuilder, callback istructs.V
 		t, h float64
 	)
 	kb := key.(*modBusKeyBuilder)
+	if ms.modbus == nil {
+		ms.modbus = &modbusClient{}
+	}
 	err = ms.modbus.Connect(kb.host(), kb.port(), kb.slaveID())
 	if err != nil {
 		return err
 	}
 	defer ms.modbus.Close()
+
 	t, h, err = ms.modbus.ReadData()
 	if err != nil {
 		return err
@@ -92,7 +101,7 @@ func (ms *modbusStorage) Read(key istructs.IStateKeyBuilder, callback istructs.V
 // Connect establishes a connection to the Modbus device.
 func (mc *modbusClient) Connect(ip string, port string, slaveID byte) error {
 	mc.handler = modbus.NewTCPClientHandler(fmt.Sprintf("%s:%s", ip, port))
-	mc.handler.Timeout = 10 * time.Second
+	mc.handler.Timeout = 3 * time.Second
 	mc.handler.SlaveId = slaveID
 	return mc.handler.Connect()
 }
