@@ -8,6 +8,7 @@ package iextenginewazero
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"math"
@@ -23,6 +24,7 @@ import (
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/iextengine"
 	imetrics "github.com/voedger/voedger/pkg/metrics"
+	"github.com/voedger/voedger/pkg/processors"
 	safe "github.com/voedger/voedger/pkg/state/isafestateapi"
 	"github.com/voedger/voedger/pkg/state/safestate"
 )
@@ -87,10 +89,16 @@ type allocatedBuf struct {
 
 type extensionEngineFactory struct {
 	wasmConfig iextengine.WASMFactoryConfig
+	vvmName    processors.VVMName
+	imetrics   imetrics.IMetrics
 }
 
 func newLimitedWriter(limit int) limitedWriter {
 	return limitedWriter{limit: limit}
+}
+
+func (w *limitedWriter) Reset() {
+	w.buf = w.buf[:0]
 }
 
 func (w *limitedWriter) Write(p []byte) (n int, err error) {
@@ -109,10 +117,10 @@ func (f extensionEngineFactory) New(ctx context.Context, app appdef.AppQName, pa
 			modules:            make(map[string]*wazeroExtPkg),
 			config:             config,
 			compile:            f.wasmConfig.Compile,
-			invocationsTotal:   f.wasmConfig.InvocationsTotal,
-			invocationsSeconds: f.wasmConfig.InvocationsSeconds,
-			errorsTotal:        f.wasmConfig.ErrorsTotal,
-			recoversTotal:      f.wasmConfig.RecoversTotal,
+			invocationsTotal:   f.imetrics.AppMetricAddr(metric_voedger_pee_invocations_total, string(f.vvmName), app),
+			invocationsSeconds: f.imetrics.AppMetricAddr(metric_voedger_pee_invocations_seconds, string(f.vvmName), app),
+			errorsTotal:        f.imetrics.AppMetricAddr(metric_voedger_pee_errors_total, string(f.vvmName), app),
+			recoversTotal:      f.imetrics.AppMetricAddr(metric_voedger_pee_recovers_total, string(f.vvmName), app),
 			autoRecover:        true,
 		}
 		err = engine.init(ctx)
@@ -319,7 +327,7 @@ func (f *wazeroExtEngine) initModule(ctx context.Context, pkgName string, wasmda
 	ePkg := &wazeroExtPkg{}
 
 	ePkg.stdout = newLimitedWriter(maxStdErrSize)
-	ePkg.moduleCfg = wazero.NewModuleConfig().WithName("wasm").WithStdout(&ePkg.stdout).WithSysWalltime()
+	ePkg.moduleCfg = wazero.NewModuleConfig().WithName("wasm").WithStdout(&ePkg.stdout).WithSysWalltime().WithRandSource(rand.Reader)
 
 	if f.compile {
 		ePkg.compiled, err = f.rtm.CompileModule(ctx, wasmdata)
@@ -411,6 +419,8 @@ func (f *wazeroExtEngine) invoke(ctx context.Context, extension appdef.FullQName
 	for i := range f.pkg.allocatedBufs {
 		f.pkg.allocatedBufs[i].offs = 0 // reuse pre-allocated memory
 	}
+
+	f.pkg.stdout.Reset()
 
 	begin := time.Now()
 

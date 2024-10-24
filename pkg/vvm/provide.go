@@ -40,10 +40,10 @@ import (
 	"github.com/voedger/voedger/pkg/processors/actualizers"
 	"github.com/voedger/voedger/pkg/processors/schedulers"
 	"github.com/voedger/voedger/pkg/router"
+	builtinapps "github.com/voedger/voedger/pkg/vvm/builtin"
 	"github.com/voedger/voedger/pkg/vvm/engines"
 
 	"github.com/voedger/voedger/pkg/appdef"
-	"github.com/voedger/voedger/pkg/apps"
 	"github.com/voedger/voedger/pkg/coreutils"
 	"github.com/voedger/voedger/pkg/coreutils/federation"
 	"github.com/voedger/voedger/pkg/iauthnz"
@@ -96,12 +96,6 @@ func ProvideVVM(vvmCfg *VVMConfig, vvmIdx VVMIdxType) (voedgerVM *VoedgerVM, err
 		},
 		ProcessorChannel_Query,
 	)
-	vvmCfg.Quotas = in10n.Quotas{
-		Channels:                int(DefaultQuotasChannelsFactor * vvmCfg.NumCommandProcessors),
-		ChannelsPerSubject:      DefaultQuotasChannelsPerSubject,
-		Subscriptions:           int(DefaultQuotasSubscriptionsFactor * vvmCfg.NumCommandProcessors),
-		SubscriptionsPerSubject: DefaultQuotasSubscriptionsPerSubject,
-	}
 	voedgerVM.VVM, voedgerVM.vvmCleanup, err = ProvideCluster(ctx, vvmCfg, vvmIdx)
 	if err != nil {
 		return nil, err
@@ -129,7 +123,7 @@ func (vvm *VoedgerVM) Launch() error {
 func ProvideCluster(vvmCtx context.Context, vvmConfig *VVMConfig, vvmIdx VVMIdxType) (*VVM, func(), error) {
 	panic(wire.Build(
 		wire.Struct(new(VVM), "*"),
-		wire.Struct(new(apps.APIs), "*"),
+		wire.Struct(new(builtinapps.APIs), "*"),
 		wire.Struct(new(schedulers.BasicSchedulerConfig), "VvmName", "SecretReader", "Tokens", "Metrics", "Broker", "Federation", "Time"),
 		provideServicePipeline,
 		provideCommandProcessors,
@@ -191,12 +185,12 @@ func ProvideCluster(vvmCtx context.Context, vvmConfig *VVMConfig, vvmIdx VVMIdxT
 		provideAppsExtensionPoints,
 		provideStatelessResources,
 		provideSidecarApps,
+		provideN10NQuotas,
 		// wire.Value(vvmConfig.NumCommandProcessors) -> (wire bug?) value github.com/untillpro/airs-bp3/vvm.CommandProcessorsCount can't be used: vvmConfig is not declared in package scope
 		wire.FieldsOf(&vvmConfig,
 			"NumCommandProcessors",
 			"NumQueryProcessors",
 			"Time",
-			"Quotas",
 			"BlobberServiceChannels",
 			"BLOBMaxSize",
 			"Name",
@@ -209,6 +203,15 @@ func ProvideCluster(vvmCtx context.Context, vvmConfig *VVMConfig, vvmIdx VVMIdxT
 			"SecretsReader",
 		),
 	))
+}
+
+func provideN10NQuotas(vvmCfg *VVMConfig) in10n.Quotas {
+	return in10n.Quotas{
+		Channels:                int(DefaultQuotasChannelsFactor * vvmCfg.NumCommandProcessors),
+		ChannelsPerSubject:      DefaultQuotasChannelsPerSubject,
+		Subscriptions:           int(DefaultQuotasSubscriptionsFactor * vvmCfg.NumCommandProcessors),
+		SubscriptionsPerSubject: DefaultQuotasSubscriptionsPerSubject,
+	}
 }
 
 func provideSchedulerRunner(cfg schedulers.BasicSchedulerConfig) appparts.ISchedulerRunner {
@@ -316,13 +319,17 @@ func provideAppPartitions(
 	sch appparts.ISchedulerRunner,
 	sr istructsmem.IStatelessResources,
 	builtinAppsArtefacts BuiltInAppsArtefacts,
+	vvmName processors.VVMName,
+	imetrics imetrics.IMetrics,
 ) (ap appparts.IAppPartitions, cleanup func(), err error) {
 
 	eef := engines.ProvideExtEngineFactories(engines.ExtEngineFactoriesConfig{
 		StatelessResources: sr,
 		AppConfigs:         builtinAppsArtefacts.AppConfigsType,
-		WASMConfig:         iextengine.WASMFactoryConfig{Compile: false},
-	})
+		WASMConfig: iextengine.WASMFactoryConfig{
+			Compile: false,
+		},
+	}, vvmName, imetrics)
 
 	return appparts.New2(
 		vvmCtx,
@@ -337,7 +344,7 @@ func provideAppPartitions(
 func provideIsDeviceAllowedFunc(appEPs map[appdef.AppQName]extensionpoints.IExtensionPoint) iauthnzimpl.IsDeviceAllowedFuncs {
 	res := iauthnzimpl.IsDeviceAllowedFuncs{}
 	for appQName, appEP := range appEPs {
-		val, ok := appEP.Find(apps.EPIsDeviceAllowedFunc)
+		val, ok := appEP.Find(builtinapps.EPIsDeviceAllowedFunc)
 		if !ok {
 			res[appQName] = func(as istructs.IAppStructs, requestWSID istructs.WSID, deviceProfileWSID istructs.WSID) (ok bool, err error) {
 				return true, nil
@@ -507,7 +514,7 @@ func provideVVMApps(builtInApps []appparts.BuiltInApp) (vvmApps VVMApps) {
 	return vvmApps
 }
 
-func provideBuiltInAppsArtefacts(vvmConfig *VVMConfig, apis apps.APIs, cfgs AppConfigsTypeEmpty,
+func provideBuiltInAppsArtefacts(vvmConfig *VVMConfig, apis builtinapps.APIs, cfgs AppConfigsTypeEmpty,
 	appEPs map[appdef.AppQName]extensionpoints.IExtensionPoint) (BuiltInAppsArtefacts, error) {
 	return vvmConfig.VVMAppsBuilder.BuildAppsArtefacts(apis, cfgs, appEPs)
 }
@@ -746,7 +753,7 @@ func provideQueryProcessors(qpCount istructs.NumQueryProcessors, qc QueryChannel
 func provideCommandProcessors(cpCount istructs.NumCommandProcessors, ccf CommandChannelFactory, cpFactory commandprocessor.ServiceFactory) OperatorCommandProcessors {
 	forks := make([]pipeline.ForkOperatorOptionFunc, cpCount)
 	for i := uint(0); i < uint(cpCount); i++ {
-		forks[i] = pipeline.ForkBranch(pipeline.ServiceOperator(cpFactory(ccf(i), istructs.PartitionID(i))))
+		forks[i] = pipeline.ForkBranch(pipeline.ServiceOperator(cpFactory(ccf(i))))
 	}
 	return pipeline.ForkOperator(pipeline.ForkSame, forks[0], forks[1:]...)
 }

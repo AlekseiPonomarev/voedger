@@ -709,7 +709,7 @@ func setUp(t *testing.T, prepare func(appDef appdef.IAppDefBuilder, cfg *istruct
 				AppConfigs:         cfgs,
 				StatelessResources: statelessResources,
 				WASMConfig:         iextengine.WASMFactoryConfig{Compile: false},
-			}))
+			}, "", imetrics.Provide()))
 	require.NoError(err)
 	defer appPartsClean()
 
@@ -741,7 +741,7 @@ func setUp(t *testing.T, prepare func(appDef appdef.IAppDefBuilder, cfg *istruct
 	systemToken, err := payloads.GetSystemPrincipalTokenApp(appTokens)
 	require.NoError(err)
 	cmdProcessorFactory := ProvideServiceFactory(appParts, coreutils.NewITime(), n10nBroker, imetrics.Provide(), "vvm", iauthnzimpl.NewDefaultAuthenticator(iauthnzimpl.TestSubjectRolesGetter, iauthnzimpl.TestIsDeviceAllowedFuncs), iauthnzimpl.NewDefaultAuthorizer(), secretReader)
-	cmdProcService := cmdProcessorFactory(serviceChannel, testAppPartID)
+	cmdProcService := cmdProcessorFactory(serviceChannel)
 
 	go func() {
 		cmdProcService.Run(ctx)

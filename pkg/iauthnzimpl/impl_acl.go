@@ -364,6 +364,10 @@ var defaultACL = ACL{
 				qNameQryGetUPLocationRates,
 				// https://dev.untill.com/projects/#!685179
 				qNameQryUpdateShopperStatement,
+				// https://dev.untill.com/projects/#!710217
+				qNameQryGetUPPayoutTransfers,
+				qNameQryGetUPInvoices,
+				qNameCmdUpdateUPProfile,
 			},
 			principalsPattern: [][]iauthnz.Principal{
 				{{Kind: iauthnz.PrincipalKind_Role, QName: qNameRoleUntillPaymentsReseller}},
@@ -389,19 +393,19 @@ var defaultACL = ACL{
 		policy: ACPolicy_Allow,
 	},
 	{
-		desc: "grant exec on c.air.UpdateUPProfile to role air.UntillPaymentsUser",
-		pattern: PatternType{
-			qNamesPattern:     []appdef.QName{qNameCmdUpdateUPProfile},
-			principalsPattern: [][]iauthnz.Principal{{{Kind: iauthnz.PrincipalKind_Role, QName: qNameRoleUntillPaymentsUser}}},
-		},
-		policy: ACPolicy_Allow,
-	},
-	{
 		desc: "grant exec on few funcs to role air.UntillPaymentsManager",
 		pattern: PatternType{
 			qNamesPattern: []appdef.QName{
 				qNameQryGetAllUPPayouts,
 				qNameQryGetUPLocationInvoiceParties,
+				// https://dev.untill.com/projects/#!710217
+				qNameQryGetAllUPInvoices,
+				qNameQryGetAllUPPayoutTransfers,
+				// https://dev.untill.com/projects/#!711418
+				qNameQryGetDailyUPReports,
+				// https://dev.untill.com/projects/#!710982
+				qNameQryGetUPVATTransfers,
+				qNameQryGetUPBeneficiaryVATDebts,
 			},
 			principalsPattern: [][]iauthnz.Principal{{{Kind: iauthnz.PrincipalKind_Role, QName: qNameRoleUntillPaymentsManager}}},
 		},
