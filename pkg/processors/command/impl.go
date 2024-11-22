@@ -65,6 +65,7 @@ func (c *cmdWorkpiece) AppPartition() appparts.IAppPartition {
 }
 
 // used in c.cluster.VSqlUpdate to determinate partitionID by WSID
+// used in c.registry.CreateLogin to dtermine if the target app is deployed
 func (c *cmdWorkpiece) AppPartitions() appparts.IAppPartitions {
 	return c.appParts
 }
@@ -205,15 +206,15 @@ func (cmdProc *cmdProc) buildCommandArgs(_ context.Context, work pipeline.IWorkp
 	return
 }
 
-func updateIDGeneratorFromO(root istructs.IObject, types appdef.IWithTypes, idGen istructs.IIDGenerator) {
+func updateIDGeneratorFromO(root istructs.IObject, findType appdef.FindType, idGen istructs.IIDGenerator) {
 	// new IDs only here because update is not allowed for ODocs in Args
-	idGen.UpdateOnSync(root.AsRecordID(appdef.SystemField_ID), types.Type(root.QName()))
+	idGen.UpdateOnSync(root.AsRecordID(appdef.SystemField_ID), findType(root.QName()))
 	for container := range root.Containers {
 		// order of containers here is the order in the schema
 		// but order in the request could be different
 		// that is not a problem because for ODocs/ORecords ID generator will bump next ID only if syncID is actually next
 		for c := range root.Children(container) {
-			updateIDGeneratorFromO(c, types, idGen)
+			updateIDGeneratorFromO(c, findType, idGen)
 		}
 	}
 }
@@ -235,7 +236,7 @@ func (cmdProc *cmdProc) recovery(ctx context.Context, cmd *cmdWorkpiece) (*appPa
 		}
 		ao := event.ArgumentObject()
 		if cmd.appStructs.AppDef().Type(ao.QName()).Kind() == appdef.TypeKind_ODoc {
-			updateIDGeneratorFromO(ao, cmd.appStructs.AppDef(), ws.idGenerator)
+			updateIDGeneratorFromO(ao, cmd.appStructs.AppDef().Type, ws.idGenerator)
 		}
 		ws.NextWLogOffset = event.WLogOffset() + 1
 		ap.nextPLogOffset = plogOffset + 1
@@ -431,11 +432,11 @@ func getArgsObject(_ context.Context, work pipeline.IWorkpiece) (err error) {
 		return nil
 	}
 	aob := cmd.reb.ArgumentObjectBuilder()
-	if argsIntf, exists := cmd.requestData["args"]; exists {
-		args, ok := argsIntf.(map[string]interface{})
-		if !ok {
-			return errors.New(`"args" field must be an object`)
-		}
+	args, exists, err := cmd.requestData.AsObject("args")
+	if err != nil {
+		return err
+	}
+	if exists {
 		aob.FillFromJSON(args)
 	}
 	if cmd.argsObject, err = aob.Build(); err != nil {
@@ -450,11 +451,11 @@ func getUnloggedArgsObject(_ context.Context, work pipeline.IWorkpiece) (err err
 		return nil
 	}
 	auob := cmd.reb.ArgumentUnloggedObjectBuilder()
-	if unloggedArgsIntf, exists := cmd.requestData["unloggedArgs"]; exists {
-		unloggedArgs, ok := unloggedArgsIntf.(map[string]interface{})
-		if !ok {
-			return errors.New(`"unloggedArgs" field must be an object`)
-		}
+	unloggedArgs, exists, err := cmd.requestData.AsObject("unloggedArgs")
+	if err != nil {
+		return err
+	}
+	if exists {
 		auob.FillFromJSON(unloggedArgs)
 	}
 	if cmd.unloggedArgsObject, err = auob.Build(); err != nil {
@@ -490,7 +491,7 @@ func buildRawEvent(_ context.Context, work pipeline.IWorkpiece) (err error) {
 	cmd := work.(*cmdWorkpiece)
 	cmd.rawEvent, err = cmd.reb.BuildRawEvent()
 	status := http.StatusBadRequest
-	if errors.Is(err, istructsmem.ErrRecordIDUniqueViolation) {
+	if errors.Is(err, istructsmem.ErrRecordIDUniqueViolationError) {
 		status = http.StatusConflict
 	}
 	err = coreutils.WrapSysError(err, status)

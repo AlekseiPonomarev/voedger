@@ -40,11 +40,13 @@ func Test_validateLimitNames(t *testing.T) {
 		adb := New()
 		adb.AddPackage("test", "test.com/test")
 
-		_ = adb.AddCommand(cmdName)
-		_ = adb.AddQuery(queryName)
-		_ = adb.AddCDoc(docName)
+		wsb := adb.AddWorkspace(NewQName("test", "workspace"))
 
-		_ = adb.AddRole(roleName)
+		_ = wsb.AddCommand(cmdName)
+		_ = wsb.AddQuery(queryName)
+		_ = wsb.AddCDoc(docName)
+
+		_ = wsb.AddRole(roleName)
 
 		return adb.MustBuild()
 	}()
@@ -73,7 +75,7 @@ func Test_validateLimitNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := validateLimitNames(app, tt.names)
+			got := validateLimitNames(app.Type, tt.names)
 			if tt.want == nil {
 				require.NoError(got, "validateLimitNames(app, %v) returns unexpected error %v", tt.names, got)
 			} else {

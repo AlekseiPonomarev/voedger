@@ -65,7 +65,7 @@ const (
 	ProjectorEventKind_Execute
 	ProjectorEventKind_ExecuteWithParam
 
-	ProjectorEventKind_Count
+	ProjectorEventKind_count
 )
 
 // ProjectorEventKind_AnyChanges describes events for record any change.
@@ -110,18 +110,6 @@ type IProjectorEventsBuilder interface {
 	// # Panics:
 	//	- if event for QName is not added.
 	SetComment(on QName, comment ...string) IProjectorEventsBuilder
-}
-
-type IWithProjectors interface {
-	// Return projector by name.
-	//
-	// Returns nil if not found.
-	Projector(QName) IProjector
-
-	// Enumerates all application projectors.
-	//
-	// Projectors are enumerated in alphabetical order by QName.
-	Projectors(func(IProjector) bool)
 }
 
 type IProjectorsBuilder interface {

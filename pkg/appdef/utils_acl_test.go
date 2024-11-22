@@ -61,17 +61,16 @@ func Test_validateACLResourceNames(t *testing.T) {
 	cmd := NewQName("test", "cmd")
 	query := NewQName("test", "query")
 	role := NewQName("test", "role")
-	ws := NewQName("test", "ws")
 
 	app := func() IAppDef {
 		adb := New()
+		wsb := adb.AddWorkspace(NewQName("test", "ws"))
 
-		_ = adb.AddCDoc(cdoc)
-		_ = adb.AddGDoc(gdoc)
-		_ = adb.AddCommand(cmd)
-		_ = adb.AddQuery(query)
-		_ = adb.AddRole(role)
-		_ = adb.AddWorkspace(ws)
+		_ = wsb.AddGDoc(gdoc)
+		_ = wsb.AddCDoc(cdoc)
+		_ = wsb.AddCommand(cmd)
+		_ = wsb.AddQuery(query)
+		_ = wsb.AddRole(role)
 
 		return adb.MustBuild()
 	}()
@@ -85,7 +84,7 @@ func Test_validateACLResourceNames(t *testing.T) {
 		{"error: empty names", []QName{}, nil, ErrMissedError},
 		{"error: unknown name", []QName{NewQName("test", "unknown")}, nil, ErrNotFoundError},
 
-		{"ok: test.cdoc + test.gdoc", []QName{cdoc, gdoc}, QNamesFrom(cdoc, gdoc), nil},
+		{"ok: test.gdoc + test.cdoc", []QName{gdoc, cdoc}, QNamesFrom(gdoc, cdoc), nil},
 
 		{"ok: test.cmd + test.query", []QName{cmd, query}, QNamesFrom(cmd, query), nil},
 
@@ -98,7 +97,7 @@ func Test_validateACLResourceNames(t *testing.T) {
 	require := require.New(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := validateACLResourceNames(app, tt.on...)
+			got, err := validateACLResourceNames(app.Type, tt.on...)
 			if tt.wantErr == nil {
 				require.NoError(err, "unexpected error %v in validatePrivilegeOnNames(%v)", err, tt.on)
 				require.Equal(tt.want, got, "validatePrivilegeOnNames(%v): want %v, got %v", tt.on, tt.want, got)

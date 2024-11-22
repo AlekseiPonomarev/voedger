@@ -11,33 +11,17 @@ type IAppDef interface {
 
 	IWithPackages
 	IWithWorkspaces
-
-	IWithTypes
-	IWithDataTypes
-
-	IWithStructures
-	IWithRecords
-	IWithGDocs
-	IWithCDocs
-	IWithWDocs
-	IWithSingletons
-	IWithODocs
-	IWithObjects
-
-	IWithViews
-
-	IWithExtensions
-	IWithFunctions
-	IWithCommands
-	IWithQueries
-	IWithProjectors
-	IWithJobs
-
-	IWithRoles
 	IWithACL
 
-	IWithRates
-	IWithLimits
+	// Returns type by name.
+	//
+	// If not found then empty type with TypeKind_null is returned
+	Type(QName) IType
+
+	// Enumerates types.
+	//
+	// Types are enumerated in alphabetical order of QNames.
+	Types(func(IType) bool)
 }
 
 type IAppDefBuilder interface {
@@ -45,27 +29,6 @@ type IAppDefBuilder interface {
 
 	IPackagesBuilder
 	IWorkspacesBuilder
-
-	IDataTypesBuilder
-
-	IGDocsBuilder
-	ICDocsBuilder
-	IWDocsBuilder
-	IODocsBuilder
-	IObjectsBuilder
-
-	IViewsBuilder
-
-	ICommandsBuilder
-	IQueriesBuilder
-	IProjectorsBuilder
-	IJobsBuilder
-
-	IRolesBuilder
-	IACLBuilder
-
-	IRatesBuilder
-	ILimitsBuilder
 
 	// Returns application definition while building.
 	//

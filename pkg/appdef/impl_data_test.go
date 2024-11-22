@@ -22,20 +22,23 @@ func Test_AppDef_AddData(t *testing.T) {
 
 	var app IAppDef
 
+	wsName := NewQName("test", "workspace")
 	intName := NewQName("test", "int")
 	strName := NewQName("test", "string")
 	tokenName := NewQName("test", "token")
 
-	t.Run("must be ok to add data types", func(t *testing.T) {
+	t.Run("should be ok to add data types", func(t *testing.T) {
 		adb := New()
 		adb.AddPackage("test", "test.com/test")
 
-		_ = adb.AddData(intName, DataKind_int64, NullQName)
-		_ = adb.AddData(strName, DataKind_string, NullQName)
-		token := adb.AddData(tokenName, DataKind_string, strName)
+		ws := adb.AddWorkspace(wsName)
+
+		_ = ws.AddData(intName, DataKind_int64, NullQName)
+		_ = ws.AddData(strName, DataKind_string, NullQName)
+		token := ws.AddData(tokenName, DataKind_string, strName)
 		token.AddConstraints(MinLen(1), MaxLen(100), Pattern(`^\w+$`, "only word characters allowed"))
 
-		t.Run("must be ok to build", func(t *testing.T) {
+		t.Run("should be ok to build", func(t *testing.T) {
 			a, err := adb.Build()
 			require.NoError(err)
 			require.NotNil(a)
@@ -46,133 +49,152 @@ func Test_AppDef_AddData(t *testing.T) {
 
 	require.NotNil(app)
 
-	t.Run("must be ok to find builded data type", func(t *testing.T) {
-		i := app.Data(intName)
-		require.Equal(TypeKind_Data, i.Kind())
-		require.Equal(intName, i.QName())
-		require.Equal(DataKind_int64, i.DataKind())
-		require.False(i.IsSystem())
-		require.Equal(app.SysData(DataKind_int64), i.Ancestor())
+	testWith := func(tested testedTypes) {
+		t.Run("should be ok to find builded data type", func(t *testing.T) {
+			i := Data(tested.Type, intName)
+			require.Equal(TypeKind_Data, i.Kind())
+			require.Equal(intName, i.QName())
+			require.Equal(DataKind_int64, i.DataKind())
+			require.False(i.IsSystem())
+			require.Equal(SysData(tested.Type, DataKind_int64), i.Ancestor())
 
-		s := app.Data(strName)
-		require.Equal(TypeKind_Data, s.Kind())
-		require.Equal(strName, s.QName())
-		require.Equal(DataKind_string, s.DataKind())
-		require.Equal(app.SysData(DataKind_string), s.Ancestor())
+			s := Data(tested.Type, strName)
+			require.Equal(TypeKind_Data, s.Kind())
+			require.Equal(strName, s.QName())
+			require.Equal(DataKind_string, s.DataKind())
+			require.Equal(SysData(tested.Type, DataKind_string), s.Ancestor())
 
-		tk := app.Data(tokenName)
-		require.Equal(TypeKind_Data, tk.Kind())
-		require.Equal(tokenName, tk.QName())
-		require.Equal(DataKind_string, tk.DataKind())
-		require.Equal(s, tk.Ancestor())
-		cnt := 0
-		for k, c := range tk.Constraints(false) {
-			cnt++
-			switch k {
-			case ConstraintKind_MinLen:
-				require.Equal(ConstraintKind_MinLen, c.Kind())
-				require.EqualValues(1, c.Value())
-			case ConstraintKind_MaxLen:
-				require.Equal(ConstraintKind_MaxLen, c.Kind())
-				require.EqualValues(100, c.Value())
-			case ConstraintKind_Pattern:
-				require.Equal(ConstraintKind_Pattern, c.Kind())
-				require.EqualValues(`^\w+$`, c.Value().(*regexp.Regexp).String())
-				require.Equal("only word characters allowed", c.Comment())
-			default:
-				require.Failf("unexpected constraint", "constraint: %v", c)
-			}
-		}
-		require.Equal(3, cnt)
-	})
-
-	t.Run("should be ok to enum data types", func(t *testing.T) {
-		cnt := 0
-		for d := range app.DataTypes {
-			if !d.IsSystem() {
+			tk := Data(tested.Type, tokenName)
+			require.Equal(TypeKind_Data, tk.Kind())
+			require.Equal(tokenName, tk.QName())
+			require.Equal(DataKind_string, tk.DataKind())
+			require.Equal(s, tk.Ancestor())
+			cnt := 0
+			for k, c := range tk.Constraints(false) {
 				cnt++
-				require.Equal(TypeKind_Data, d.Kind())
-				switch cnt {
-				case 1:
-					require.Equal(intName, d.QName())
-				case 2:
-					require.Equal(strName, d.QName())
-				case 3:
-					require.Equal(tokenName, d.QName())
+				switch k {
+				case ConstraintKind_MinLen:
+					require.Equal(ConstraintKind_MinLen, c.Kind())
+					require.EqualValues(1, c.Value())
+				case ConstraintKind_MaxLen:
+					require.Equal(ConstraintKind_MaxLen, c.Kind())
+					require.EqualValues(100, c.Value())
+				case ConstraintKind_Pattern:
+					require.Equal(ConstraintKind_Pattern, c.Kind())
+					require.EqualValues(`^\w+$`, c.Value().(*regexp.Regexp).String())
+					require.Equal("only word characters allowed", c.Comment())
 				default:
-					require.Failf("unexpected data type", "data type: %v", d)
+					require.Failf("unexpected constraint", "constraint: %v", c)
 				}
 			}
-		}
-		require.Equal(3, cnt)
-	})
+			require.Equal(3, cnt)
+		})
 
-	t.Run("data types range should be breakable", func(t *testing.T) {
-		cnt := 0
-		for range app.DataTypes {
-			cnt++
-			break
-		}
-		require.Equal(1, cnt)
-	})
+		t.Run("should be ok to enum data types", func(t *testing.T) {
+			cnt := 0
+			for d := range DataTypes(tested.Types) {
+				if !d.IsSystem() {
+					cnt++
+					require.Equal(TypeKind_Data, d.Kind())
+					switch cnt {
+					case 1:
+						require.Equal(intName, d.QName())
+					case 2:
+						require.Equal(strName, d.QName())
+					case 3:
+						require.Equal(tokenName, d.QName())
+					default:
+						require.Failf("unexpected data type", "data type: %v", d)
+					}
+				}
+			}
+			require.Equal(3, cnt)
+		})
 
-	require.Nil(app.Data(NewQName("test", "unknown")), "check nil returns")
+		require.Nil(Data(tested.Type, NewQName("test", "unknown")), "check nil returns")
+	}
 
-	require.Panics(func() {
-		New().AddData(NullQName, DataKind_int64, NullQName)
-	}, require.Is(ErrMissedError))
+	testWith(app)
+	testWith(app.Workspace(wsName))
 
-	require.Panics(func() {
-		New().AddData(NewQName("naked", "🔫"), DataKind_QName, NullQName)
-	}, require.Is(ErrInvalidError), require.Has("naked.🔫"))
+	t.Run("should be panics", func(t *testing.T) {
 
-	t.Run("panic if type with name already exists", func(t *testing.T) {
-		adb := New()
-		adb.AddPackage("test", "test.com/test")
-		adb.AddObject(intName)
-		require.Panics(func() {
-			adb.AddData(intName, DataKind_int64, NullQName)
-		}, require.Is(ErrAlreadyExistsError), require.Has(intName.String()))
-	})
+		t.Run("if data type name missed", func(t *testing.T) {
+			wsb := New().AddWorkspace(wsName)
+			require.Panics(func() {
+				wsb.AddData(NullQName, DataKind_int64, NullQName)
+			}, require.Is(ErrMissedError))
+		})
 
-	require.Panics(func() {
-		New().AddData(intName, DataKind_null, NullQName)
-	}, require.Is(ErrNotFoundError))
+		t.Run("if invalid data type name", func(t *testing.T) {
+			wsb := New().AddWorkspace(wsName)
+			require.Panics(func() {
+				wsb.AddData(NewQName("naked", "🔫"), DataKind_QName, NullQName)
+			}, require.Is(ErrInvalidError), require.Has("naked.🔫"))
+		})
 
-	require.Panics(func() {
-		New().AddData(intName, DataKind_int64,
-			NewQName("test", "unknown"), // <- error here
-		)
-	}, require.Is(ErrNotFoundError), require.Has("test.unknown"))
+		t.Run("if type with name already exists", func(t *testing.T) {
+			adb := New()
+			adb.AddPackage("test", "test.com/test")
+			wsb := adb.AddWorkspace(wsName)
+			wsb.AddObject(intName)
+			require.Panics(func() {
+				wsb.AddData(intName, DataKind_int64, NullQName)
+			}, require.Is(ErrAlreadyExistsError), require.Has(intName.String()))
+		})
 
-	t.Run("panic if ancestor is not data type", func(t *testing.T) {
-		objName := NewQName("test", "object")
-		adb := New()
-		adb.AddPackage("test", "test.com/test")
-		_ = adb.AddObject(objName)
-		require.Panics(func() {
-			adb.AddData(intName, DataKind_int64,
-				objName, // <- error here
-			)
-		}, require.Is(ErrNotFoundError), require.Has(objName.String()))
-	})
+		t.Run("if sys data to inherits from not found", func(t *testing.T) {
+			adb := New()
+			adb.AddPackage("test", "test.com/test")
+			wsb := adb.AddWorkspace(wsName)
+			require.Panics(func() {
+				wsb.AddData(strName, DataKind_null, NullQName)
+			}, require.Is(ErrNotFoundError), require.Has("null"))
+		})
 
-	t.Run("panic if ancestor has different kind", func(t *testing.T) {
-		adb := New()
-		adb.AddPackage("test", "test.com/test")
-		_ = adb.AddData(strName, DataKind_string, NullQName)
-		require.Panics(func() {
-			adb.AddData(intName, DataKind_int64, strName)
-		}, require.Is(ErrInvalidError), require.Has(strName.String()))
-	})
+		t.Run("if ancestor not found", func(t *testing.T) {
+			adb := New()
+			adb.AddPackage("test", "test.com/test")
+			wsb := adb.AddWorkspace(wsName)
+			require.Panics(func() {
+				wsb.AddData(strName, DataKind_string,
+					NewQName("test", "unknown"), // <- error here
+				)
+			}, require.Is(ErrNotFoundError), require.Has("test.unknown"))
+		})
 
-	t.Run("panic if incompatible constraints", func(t *testing.T) {
-		adb := New()
-		adb.AddPackage("test", "test.com/test")
-		require.Panics(func() { _ = adb.AddData(strName, DataKind_string, NullQName, MinIncl(1)) },
-			require.Is(ErrIncompatibleError), require.Has("MinIncl"))
-		require.Panics(func() { _ = adb.AddData(intName, DataKind_float64, NullQName, MaxLen(100)) },
-			require.Is(ErrIncompatibleError), require.Has("MaxLen"))
+		t.Run("if ancestor is not data type", func(t *testing.T) {
+			objName := NewQName("test", "object")
+			adb := New()
+			adb.AddPackage("test", "test.com/test")
+			wsb := adb.AddWorkspace(wsName)
+			_ = wsb.AddObject(objName)
+			require.Panics(func() {
+				wsb.AddData(intName, DataKind_int64,
+					objName, // <- error here
+				)
+			}, require.Is(ErrNotFoundError), require.Has(objName.String()))
+		})
+
+		t.Run("if ancestor has different kind", func(t *testing.T) {
+			adb := New()
+			adb.AddPackage("test", "test.com/test")
+			wsb := adb.AddWorkspace(wsName)
+			_ = wsb.AddData(strName, DataKind_string, NullQName)
+			require.Panics(func() {
+				wsb.AddData(intName, DataKind_int64, strName)
+			}, require.Is(ErrInvalidError), require.Has(strName.String()))
+		})
+
+		t.Run("if incompatible constraints", func(t *testing.T) {
+			adb := New()
+			adb.AddPackage("test", "test.com/test")
+			wsb := adb.AddWorkspace(wsName)
+			require.Panics(func() { _ = wsb.AddData(strName, DataKind_string, NullQName, MinIncl(1)) },
+				require.Is(ErrIncompatibleError), require.Has("MinIncl"))
+			require.Panics(func() { _ = wsb.AddData(intName, DataKind_float64, NullQName, MaxLen(100)) },
+				require.Is(ErrIncompatibleError), require.Has("MaxLen"))
+		})
 	})
 }
 
@@ -206,11 +228,13 @@ func Test_appDef_makeSysDataTypes(t *testing.T) {
 	require.NoError(err)
 
 	t.Run("must be ok to get system data types", func(t *testing.T) {
+		sysWS := app.Workspace(SysWorkspaceQName)
 		for k := DataKind_null + 1; k < DataKind_FakeLast; k++ {
-			d := app.SysData(k)
+			d := SysData(app.Type, k)
 			require.NotNil(d)
 			require.Equal(SysDataName(k), d.QName())
 			require.Equal(TypeKind_Data, d.Kind())
+			require.Equal(d.Workspace(), sysWS)
 			require.True(d.IsSystem())
 			require.Equal(k, d.DataKind())
 			require.Nil(d.Ancestor())
@@ -341,7 +365,7 @@ func TestNewConstraintPanics(t *testing.T) {
 			args{ConstraintKind_Enum, [][]byte{{1, 2, 3}, {4, 5, 6}}}, ErrUnsupportedError,
 		},
 		{"???(0)",
-			args{ConstraintKind_Count, 0}, ErrUnsupportedError,
+			args{ConstraintKind_count, 0}, ErrUnsupportedError,
 		},
 	}
 	require := require.New(t)
@@ -402,9 +426,9 @@ func TestConstraintKind_MarshalText(t *testing.T) {
 			want: `ConstraintKind_MinLen`,
 		},
 		{
-			name: `ConstraintKind_Count —> 4`,
-			k:    ConstraintKind_Count,
-			want: utils.UintToString(ConstraintKind_Count),
+			name: `ConstraintKind_count —> 4`,
+			k:    ConstraintKind_count,
+			want: utils.UintToString(ConstraintKind_count),
 		},
 	}
 	for _, tt := range tests {
@@ -421,11 +445,11 @@ func TestConstraintKind_MarshalText(t *testing.T) {
 	}
 
 	t.Run("100% cover", func(t *testing.T) {
-		const tested = ConstraintKind_Count + 1
+		const tested = ConstraintKind_count + 1
 		want := "ConstraintKind(" + utils.UintToString(tested) + ")"
 		got := tested.String()
 		if got != want {
-			t.Errorf("(ConstraintKind_Count + 1).String() = %v, want %v", got, want)
+			t.Errorf("(ConstraintKind_count + 1).String() = %v, want %v", got, want)
 		}
 	})
 }
@@ -437,7 +461,7 @@ func TestConstraintKind_TrimString(t *testing.T) {
 		want string
 	}{
 		{name: "basic", k: ConstraintKind_MinLen, want: "MinLen"},
-		{name: "out of range", k: ConstraintKind_Count + 1, want: (ConstraintKind_Count + 1).String()},
+		{name: "out of range", k: ConstraintKind_count + 1, want: (ConstraintKind_count + 1).String()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -492,7 +516,8 @@ func Test_data_AddConstraint(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			adb := New()
 			adb.AddPackage("test", "test.com/test")
-			d := adb.AddData(NewQName("test", "test"), tt.args.da, NullQName)
+			wsb := adb.AddWorkspace(NewQName("test", "workspace"))
+			d := wsb.AddData(NewQName("test", "test"), tt.args.da, NullQName)
 			if tt.wantPanic {
 				if tt.e == nil {
 					require.Panics(func() { d.AddConstraints(NewConstraint(tt.args.ck, tt.args.cv)) })
