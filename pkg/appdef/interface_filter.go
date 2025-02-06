@@ -12,6 +12,8 @@ type FilterKind uint8
 const (
 	FilterKind_null FilterKind = iota
 
+	FilterKind_True
+
 	FilterKind_QNames
 	FilterKind_Types
 	FilterKind_Tags
@@ -31,23 +33,27 @@ type IFilter interface {
 
 	// Return filtered QNames.
 	// If kind is not FilterKind_QNames, returns empty iterator
-	QNames() func(func(QName) bool)
+	QNames() []QName
 
 	// Return filtered type kinds.
 	// If kind is not FilterKind_Types, returns empty iterator
-	Types() func(func(TypeKind) bool)
+	Types() []TypeKind
+
+	// Return filtered types workspace.
+	// If kind is not FilterKind_Types or not workspace assigned, returns NullQName.
+	WS() QName
 
 	// Return filtered tags.
 	// If kind is not FilterKind_Tags, returns empty iterator
-	Tags() func(func(string) bool)
+	Tags() []QName
 
 	// Returns sub-filters to conjunct
 	// If kind is not FilterKind_And, returns empty iterator
-	And() func(func(IFilter) bool)
+	And() []IFilter
 
 	// Returns sub-filters to disjunct
 	// If kind is not FilterKind_Or, returns empty iterator
-	Or() func(func(IFilter) bool)
+	Or() []IFilter
 
 	// Return negative sub-filter
 	// If kind is not FilterKind_Not, returns nil

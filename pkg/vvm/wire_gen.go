@@ -12,9 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"github.com/voedger/voedger/pkg/appdef"
+	"github.com/voedger/voedger/pkg/appdef/builder"
 	"github.com/voedger/voedger/pkg/appparts"
 	"github.com/voedger/voedger/pkg/apppartsctl"
 	"github.com/voedger/voedger/pkg/btstrp"
+	"github.com/voedger/voedger/pkg/bus"
 	"github.com/voedger/voedger/pkg/coreutils"
 	"github.com/voedger/voedger/pkg/coreutils/federation"
 	"github.com/voedger/voedger/pkg/extensionpoints"
@@ -44,6 +46,7 @@ import (
 	"github.com/voedger/voedger/pkg/pipeline"
 	"github.com/voedger/voedger/pkg/processors"
 	"github.com/voedger/voedger/pkg/processors/actualizers"
+	"github.com/voedger/voedger/pkg/processors/blobber"
 	"github.com/voedger/voedger/pkg/processors/command"
 	"github.com/voedger/voedger/pkg/processors/query"
 	"github.com/voedger/voedger/pkg/processors/schedulers"
@@ -55,7 +58,6 @@ import (
 	"github.com/voedger/voedger/pkg/vvm/db_cert_cache"
 	"github.com/voedger/voedger/pkg/vvm/engines"
 	"github.com/voedger/voedger/pkg/vvm/metrics"
-	"github.com/voedger/voedger/staging/src/github.com/untillpro/airs-ibus"
 	"golang.org/x/crypto/acme/autocert"
 	"net/url"
 	"os"
@@ -64,7 +66,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // Injectors from provide.go:
@@ -94,7 +95,7 @@ func ProvideCluster(vvmCtx context.Context, vvmConfig *VVMConfig, vvmIdx VVMIdxT
 		return nil, nil, err
 	}
 	iAppStorageUncachingProviderFactory := provideIAppStorageUncachingProviderFactory(iAppStorageFactory, vvmConfig)
-	iAppStorageProvider := provideCachingAppStorageProvider(storageCacheSizeType, iMetrics, vvmName, iAppStorageUncachingProviderFactory)
+	iAppStorageProvider := provideCachingAppStorageProvider(storageCacheSizeType, iMetrics, vvmName, iAppStorageUncachingProviderFactory, iTime)
 	iAppStructsProvider := provideIAppStructsProvider(appConfigsTypeEmpty, bucketsFactoryType, iAppTokensFactory, iAppStorageProvider)
 	syncActualizerFactory := actualizers.ProvideSyncActualizerFactory()
 	quotas := provideN10NQuotas(vvmConfig)
@@ -111,7 +112,7 @@ func ProvideCluster(vvmCtx context.Context, vvmConfig *VVMConfig, vvmIdx VVMIdxT
 	v3 := actualizers.NewSyncActualizerFactoryFactory(syncActualizerFactory, iSecretReader, in10nBroker, iStatelessResources)
 	v4 := vvmConfig.ActualizerStateOpts
 	basicAsyncActualizerConfig := provideBasicAsyncActualizerConfig(vvmName, iSecretReader, iTokens, iMetrics, in10nBroker, iFederation, v4...)
-	iActualizersService := provideAsyncActualizersService(basicAsyncActualizerConfig)
+	iActualizersService := actualizers.ProvideActualizers(basicAsyncActualizerConfig)
 	basicSchedulerConfig := schedulers.BasicSchedulerConfig{
 		VvmName:      vvmName,
 		SecretReader: iSecretReader,
@@ -143,7 +144,7 @@ func ProvideCluster(vvmCtx context.Context, vvmConfig *VVMConfig, vvmIdx VVMIdxT
 		cleanup()
 		return nil, nil, err
 	}
-	iAppPartitions, cleanup3, err := provideAppPartitions(vvmCtx, iAppStructsProvider, v3, iActualizersService, iSchedulerRunner, iStatelessResources, builtInAppsArtefacts, vvmName, iMetrics)
+	iAppPartitions, cleanup3, err := provideAppPartitions(vvmCtx, iAppStructsProvider, v3, iActualizersService, iSchedulerRunner, bucketsFactoryType, iStatelessResources, builtInAppsArtefacts, vvmName, iMetrics)
 	if err != nil {
 		cleanup2()
 		cleanup()
@@ -152,14 +153,20 @@ func ProvideCluster(vvmCtx context.Context, vvmConfig *VVMConfig, vvmIdx VVMIdxT
 	v6 := provideSubjectGetterFunc()
 	isDeviceAllowedFuncs := provideIsDeviceAllowedFunc(v2)
 	iAuthenticator := iauthnzimpl.NewDefaultAuthenticator(v6, isDeviceAllowedFuncs)
-	iAuthorizer := iauthnzimpl.NewDefaultAuthorizer()
-	serviceFactory := commandprocessor.ProvideServiceFactory(iAppPartitions, iTime, in10nBroker, iMetrics, vvmName, iAuthenticator, iAuthorizer, iSecretReader)
+	serviceFactory := commandprocessor.ProvideServiceFactory(iAppPartitions, iTime, in10nBroker, iMetrics, vvmName, iAuthenticator, iSecretReader)
 	operatorCommandProcessors := provideCommandProcessors(numCommandProcessors, commandChannelFactory, serviceFactory)
 	numQueryProcessors := vvmConfig.NumQueryProcessors
 	queryChannel := provideQueryChannel(serviceChannelFactory)
 	queryprocessorServiceFactory := queryprocessor.ProvideServiceFactory()
 	maxPrepareQueriesType := vvmConfig.MaxPrepareQueries
-	operatorQueryProcessors := provideQueryProcessors(numQueryProcessors, queryChannel, iAppPartitions, queryprocessorServiceFactory, iMetrics, vvmName, maxPrepareQueriesType, iAuthenticator, iAuthorizer, iTokens, iFederation, iStatelessResources, iSecretReader)
+	operatorQueryProcessors := provideQueryProcessors(numQueryProcessors, queryChannel, iAppPartitions, queryprocessorServiceFactory, iMetrics, vvmName, maxPrepareQueriesType, iAuthenticator, iTokens, iFederation, iStatelessResources, iSecretReader)
+	numBLOBProcessors := vvmConfig.NumBLOBProcessors
+	blobServiceChannel := provideBLOBChannel(serviceChannelFactory)
+	blobAppStoragePtr := provideBlobAppStoragePtr(iAppStorageProvider)
+	blobStorage := provideBlobStorage(blobAppStoragePtr, iTime)
+	blobMaxSizeType := vvmConfig.BLOBMaxSize
+	wLimiterFactory := provideWLimiterFactory(blobMaxSizeType)
+	operatorBLOBProcessors := provideOpBLOBProcessors(numBLOBProcessors, blobServiceChannel, blobStorage, wLimiterFactory)
 	iAppPartitionsController, cleanup4, err := apppartsctl.New(iAppPartitions)
 	if err != nil {
 		cleanup3()
@@ -169,7 +176,6 @@ func ProvideCluster(vvmCtx context.Context, vvmConfig *VVMConfig, vvmIdx VVMIdxT
 	}
 	iAppPartsCtlPipelineService := provideAppPartsCtlPipelineService(iAppPartitionsController)
 	v7 := provideBuiltInApps(builtInAppsArtefacts, v5)
-	blobAppStoragePtr := provideBlobAppStoragePtr(iAppStorageProvider)
 	routerAppStoragePtr := provideRouterAppStoragePtr(iAppStorageProvider)
 	bootstrapOperator, err := provideBootstrapOperator(iFederation, iAppStructsProvider, iTime, iAppPartitions, v7, v5, iTokens, iAppStorageProvider, blobAppStoragePtr, routerAppStoragePtr)
 	if err != nil {
@@ -181,15 +187,15 @@ func ProvideCluster(vvmCtx context.Context, vvmConfig *VVMConfig, vvmIdx VVMIdxT
 	}
 	vvmPortType := vvmConfig.VVMPort
 	routerParams := provideRouterParams(vvmConfig, vvmPortType, vvmIdx)
-	busTimeout := vvmConfig.BusTimeout
-	blobberServiceChannels := vvmConfig.BlobberServiceChannels
-	blobMaxSizeType := vvmConfig.BLOBMaxSize
-	blobStorage := provideBlobStorage(blobAppStoragePtr, iTime)
+	sendTimeout := vvmConfig.SendTimeout
+	blobServiceChannelGroupIdx := provideProcessorChannelGroupIdxBLOB(vvmConfig)
+	iRequestHandler := blobprocessor.NewIRequestHandler(iProcBus, blobServiceChannelGroupIdx)
 	cache := dbcertcache.ProvideDbCache(routerAppStoragePtr)
 	commandProcessorsChannelGroupIdxType := provideProcessorChannelGroupIdxCommand(vvmConfig)
 	queryProcessorsChannelGroupIdxType := provideProcessorChannelGroupIdxQuery(vvmConfig)
 	vvmApps := provideVVMApps(v7)
-	iBus := provideIBus(iAppPartitions, iProcBus, commandProcessorsChannelGroupIdxType, queryProcessorsChannelGroupIdxType, numCommandProcessors, vvmApps)
+	requestHandler := provideRequestHandler(iAppPartitions, iProcBus, commandProcessorsChannelGroupIdxType, queryProcessorsChannelGroupIdxType, numCommandProcessors, vvmApps)
+	iRequestSender := bus.NewIRequestSender(iTime, sendTimeout, requestHandler)
 	v8, err := provideNumsAppsWorkspaces(vvmApps, iAppStructsProvider, v5)
 	if err != nil {
 		cleanup4()
@@ -198,14 +204,14 @@ func ProvideCluster(vvmCtx context.Context, vvmConfig *VVMConfig, vvmIdx VVMIdxT
 		cleanup()
 		return nil, nil, err
 	}
-	routerServices := provideRouterServices(vvmCtx, routerParams, busTimeout, in10nBroker, quotas, blobberServiceChannels, blobMaxSizeType, blobStorage, cache, iBus, vvmPortSource, v8)
+	routerServices := provideRouterServices(routerParams, sendTimeout, in10nBroker, iRequestHandler, quotas, wLimiterFactory, blobStorage, cache, iRequestSender, vvmPortSource, v8)
 	adminEndpointServiceOperator := provideAdminEndpointServiceOperator(routerServices)
 	metricsServicePortInitial := vvmConfig.MetricsServicePort
 	metricsServicePort := provideMetricsServicePort(metricsServicePortInitial, vvmIdx)
 	metricsService := metrics.ProvideMetricsService(vvmCtx, metricsServicePort, iMetrics)
 	metricsServiceOperator := provideMetricsServiceOperator(metricsService)
 	publicEndpointServiceOperator := providePublicEndpointServiceOperator(routerServices, metricsServiceOperator)
-	servicePipeline := provideServicePipeline(vvmCtx, operatorCommandProcessors, operatorQueryProcessors, iActualizersService, iAppPartsCtlPipelineService, bootstrapOperator, adminEndpointServiceOperator, publicEndpointServiceOperator)
+	servicePipeline := provideServicePipeline(vvmCtx, operatorCommandProcessors, operatorQueryProcessors, operatorBLOBProcessors, iActualizersService, iAppPartsCtlPipelineService, bootstrapOperator, adminEndpointServiceOperator, publicEndpointServiceOperator, iAppStorageProvider)
 	v9 := provideMetricsServicePortGetter(metricsService)
 	v10 := provideBuiltInAppPackages(builtInAppsArtefacts)
 	vvm := &VVM{
@@ -240,6 +246,13 @@ func ProvideVVM(vvmCfg *VVMConfig, vvmIdx VVMIdxType) (voedgerVM *VoedgerVM, err
 		ChannelBufferSize: 0,
 	}, ProcessorChannel_Query,
 	)
+
+	vvmCfg.addProcessorChannel(iprocbusmem.ChannelGroup{
+		NumChannels:       1,
+		ChannelBufferSize: 0,
+	}, ProcessorChannel_BLOB,
+	)
+
 	voedgerVM.VVM, voedgerVM.vvmCleanup, err = ProvideCluster(ctx, vvmCfg, vvmIdx)
 	if err != nil {
 		return nil, err
@@ -261,6 +274,12 @@ func (vvm *VoedgerVM) Launch() error {
 		logger.Error(err)
 	}
 	return err
+}
+
+func provideWLimiterFactory(maxSize iblobstorage.BLOBMaxSizeType) blobprocessor.WLimiterFactory {
+	return func() iblobstorage.WLimiterType {
+		return iblobstoragestg.NewWLimiter_Size(maxSize)
+	}
 }
 
 func provideN10NQuotas(vvmCfg *VVMConfig) in10n.Quotas {
@@ -340,10 +359,6 @@ func provideBasicAsyncActualizerConfig(
 	}
 }
 
-func provideAsyncActualizersService(cfg actualizers.BasicAsyncActualizerConfig) actualizers.IActualizersService {
-	return actualizers.ProvideActualizers(cfg)
-}
-
 func provideBuildInfo() (*debug.BuildInfo, error) {
 	buildInfo, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -374,6 +389,7 @@ func provideAppPartitions(
 	saf appparts.SyncActualizerFactory,
 	act actualizers.IActualizersService,
 	sch appparts.ISchedulerRunner,
+	bf irates.BucketsFactoryType,
 	sr istructsmem.IStatelessResources,
 	builtinAppsArtefacts BuiltInAppsArtefacts,
 	vvmName processors.VVMName, imetrics2 imetrics.IMetrics,
@@ -395,6 +411,7 @@ func provideAppPartitions(
 		act,
 		sch,
 		eef,
+		bf,
 	)
 }
 
@@ -675,7 +692,7 @@ func provideSidecarApps(vvmConfig *VVMConfig) (res []appparts.SidecarApp, err er
 		if err != nil {
 			return nil, err
 		}
-		appDefBuilder := appdef.New()
+		appDefBuilder := builder.New()
 		if err := parser.BuildAppDefs(appSchemaAST, appDefBuilder); err != nil {
 			return nil, err
 		}
@@ -710,6 +727,10 @@ func provideProcessorChannelGroupIdxQuery(vvmCfg *VVMConfig) QueryProcessorsChan
 	return QueryProcessorsChannelGroupIdxType(getChannelGroupIdx(vvmCfg, ProcessorChannel_Query))
 }
 
+func provideProcessorChannelGroupIdxBLOB(vvmCfg *VVMConfig) blobprocessor.BLOBServiceChannelGroupIdx {
+	return blobprocessor.BLOBServiceChannelGroupIdx(getChannelGroupIdx(vvmCfg, ProcessorChannel_BLOB))
+}
+
 func getChannelGroupIdx(vvmCfg *VVMConfig, channelType ProcessorChannelType) int {
 	for channelGroup, pc := range vvmCfg.processorsChannels {
 		if pc.ChannelType == channelType {
@@ -727,9 +748,9 @@ func provideChannelGroups(cfg *VVMConfig) (res []iprocbusmem.ChannelGroup) {
 }
 
 func provideCachingAppStorageProvider(storageCacheSize StorageCacheSizeType, metrics2 imetrics.IMetrics,
-	vvmName processors.VVMName, uncachingProvider IAppStorageUncachingProviderFactory) istorage.IAppStorageProvider {
+	vvmName processors.VVMName, uncachingProvider IAppStorageUncachingProviderFactory, iTime coreutils.ITime) istorage.IAppStorageProvider {
 	aspNonCaching := uncachingProvider()
-	return istoragecache.Provide(int(storageCacheSize), aspNonCaching, metrics2, string(vvmName))
+	return istoragecache.Provide(int(storageCacheSize), aspNonCaching, metrics2, string(vvmName), iTime)
 }
 
 func provideBlobAppStoragePtr(astp istorage.IAppStorageProvider) iblobstoragestg.BlobAppStoragePtr {
@@ -745,17 +766,10 @@ func provideRouterAppStoragePtr(astp istorage.IAppStorageProvider) dbcertcache.R
 }
 
 // port 80 -> [0] is http server, port 443 -> [0] is https server, [1] is acme server
-func provideRouterServices(vvmCtx context.Context, rp router.RouterParams, busTimeout BusTimeout, broker in10n.IN10nBroker, quotas in10n.Quotas,
-	bsc router.BlobberServiceChannels, bms iblobstorage.BLOBMaxSizeType, blobStorage BlobStorage,
-	autocertCache autocert.Cache, bus ibus.IBus, vvmPortSource *VVMPortSource, numsAppsWorkspaces map[appdef.AppQName]istructs.NumAppWorkspaces) RouterServices {
-	bp := &router.BlobberParams{
-		ServiceChannels:        bsc,
-		BLOBStorage:            blobStorage,
-		BLOBWorkersNum:         DefaultBLOBWorkersNum,
-		RetryAfterSecondsOn503: DefaultRetryAfterSecondsOn503,
-		BLOBMaxSize:            bms,
-	}
-	httpSrv, acmeSrv, adminSrv := router.Provide(vvmCtx, rp, time.Duration(busTimeout), broker, bp, autocertCache, bus, numsAppsWorkspaces)
+func provideRouterServices(rp router.RouterParams, sendTimeout bus.SendTimeout, broker in10n.IN10nBroker, blobRequestHandler blobprocessor.IRequestHandler, quotas in10n.Quotas,
+	wLimiterFactory blobprocessor.WLimiterFactory, blobStorage BlobStorage,
+	autocertCache autocert.Cache, requestSender bus.IRequestSender, vvmPortSource *VVMPortSource, numsAppsWorkspaces map[appdef.AppQName]istructs.NumAppWorkspaces) RouterServices {
+	httpSrv, acmeSrv, adminSrv := router.Provide(rp, broker, blobRequestHandler, autocertCache, requestSender, numsAppsWorkspaces)
 	vvmPortSource.getter = func() VVMPortType {
 		return VVMPortType(httpSrv.GetPort())
 	}
@@ -785,24 +799,32 @@ func provideQueryChannel(sch ServiceChannelFactory) QueryChannel {
 	return QueryChannel(sch(ProcessorChannel_Query, 0))
 }
 
+func provideBLOBChannel(sch ServiceChannelFactory) blobprocessor.BLOBServiceChannel {
+	return blobprocessor.BLOBServiceChannel(sch(ProcessorChannel_BLOB, 0))
+}
+
 func provideCommandChannelFactory(sch ServiceChannelFactory) CommandChannelFactory {
 	return func(channelIdx uint) commandprocessor.CommandChannel {
 		return commandprocessor.CommandChannel(sch(ProcessorChannel_Command, channelIdx))
 	}
 }
 
+func provideOpBLOBProcessors(numBLOBWorkers istructs.NumBLOBProcessors, blobServiceChannel blobprocessor.BLOBServiceChannel,
+	blobStorage BlobStorage, wLimiterFactory blobprocessor.WLimiterFactory) OperatorBLOBProcessors {
+	forks := make([]pipeline.ForkOperatorOptionFunc, numBLOBWorkers)
+	for i := 0; i < int(numBLOBWorkers); i++ {
+		forks[i] = pipeline.ForkBranch(pipeline.ServiceOperator(blobprocessor.ProvideService(blobServiceChannel, blobStorage,
+			wLimiterFactory)))
+	}
+	return pipeline.ForkOperator(pipeline.ForkSame, forks[0], forks[1:]...)
+}
+
 func provideQueryProcessors(qpCount istructs.NumQueryProcessors, qc QueryChannel, appParts appparts.IAppPartitions, qpFactory queryprocessor.ServiceFactory, imetrics2 imetrics.IMetrics,
-	vvm processors.VVMName, mpq MaxPrepareQueriesType, authn iauthnz.IAuthenticator, authz iauthnz.IAuthorizer,
+	vvm processors.VVMName, mpq MaxPrepareQueriesType, authn iauthnz.IAuthenticator,
 	tokens itokens.ITokens, federation2 federation.IFederation, statelessResources istructsmem.IStatelessResources, secretReader isecrets.ISecretReader) OperatorQueryProcessors {
 	forks := make([]pipeline.ForkOperatorOptionFunc, qpCount)
-	resultSenderFactory := func(ctx context.Context, sender ibus.ISender) queryprocessor.IResultSenderClosable {
-		return &resultSenderErrorFirst{
-			ctx:    ctx,
-			sender: sender,
-		}
-	}
 	for i := 0; i < int(qpCount); i++ {
-		forks[i] = pipeline.ForkBranch(pipeline.ServiceOperator(qpFactory(iprocbus.ServiceChannel(qc), resultSenderFactory, appParts, int(mpq), imetrics2, string(vvm), authn, authz, tokens, federation2, statelessResources, secretReader)))
+		forks[i] = pipeline.ForkBranch(pipeline.ServiceOperator(qpFactory(iprocbus.ServiceChannel(qc), appParts, int(mpq), imetrics2, string(vvm), authn, tokens, federation2, statelessResources, secretReader)))
 	}
 	return pipeline.ForkOperator(pipeline.ForkSame, forks[0], forks[1:]...)
 }
@@ -819,12 +841,14 @@ func provideServicePipeline(
 	vvmCtx context.Context,
 	opCommandProcessors OperatorCommandProcessors,
 	opQueryProcessors OperatorQueryProcessors,
+	opBLOBProcessors OperatorBLOBProcessors,
 	opAsyncActualizers actualizers.IActualizersService,
 	appPartsCtl IAppPartsCtlPipelineService,
 	bootstrapSyncOp BootstrapOperator,
 	adminEndpoint AdminEndpointServiceOperator,
 	publicEndpoint PublicEndpointServiceOperator,
+	appStorageProvider istorage.IAppStorageProvider,
 ) ServicePipeline {
-	return pipeline.NewSyncPipeline(vvmCtx, "ServicePipeline", pipeline.WireSyncOperator("internal services", pipeline.ForkOperator(pipeline.ForkSame, pipeline.ForkBranch(opQueryProcessors), pipeline.ForkBranch(opCommandProcessors), pipeline.ForkBranch(pipeline.ServiceOperator(opAsyncActualizers)), pipeline.ForkBranch(pipeline.ServiceOperator(appPartsCtl)))), pipeline.WireSyncOperator("admin endpoint", adminEndpoint), pipeline.WireSyncOperator("bootstrap", bootstrapSyncOp), pipeline.WireSyncOperator("public endpoint", publicEndpoint),
+	return pipeline.NewSyncPipeline(vvmCtx, "ServicePipeline", pipeline.WireSyncOperator("internal services", pipeline.ForkOperator(pipeline.ForkSame, pipeline.ForkBranch(opQueryProcessors), pipeline.ForkBranch(opCommandProcessors), pipeline.ForkBranch(opBLOBProcessors), pipeline.ForkBranch(pipeline.ServiceOperator(opAsyncActualizers)), pipeline.ForkBranch(pipeline.ServiceOperator(appPartsCtl)), pipeline.ForkBranch(pipeline.ServiceOperator(appStorageProvider)))), pipeline.WireSyncOperator("admin endpoint", adminEndpoint), pipeline.WireSyncOperator("bootstrap", bootstrapSyncOp), pipeline.WireSyncOperator("public endpoint", publicEndpoint),
 	)
 }

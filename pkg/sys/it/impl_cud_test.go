@@ -13,6 +13,7 @@ import (
 
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/coreutils"
+	"github.com/voedger/voedger/pkg/goutils/logger"
 	"github.com/voedger/voedger/pkg/istructs"
 	it "github.com/voedger/voedger/pkg/vit"
 )
@@ -469,4 +470,156 @@ func TestDenyCreateNonRawIDs(t *testing.T) {
 	ws := vit.WS(istructs.AppQName_test1_app1, "test_ws")
 	body := fmt.Sprintf(`{"cuds": [{"fields": {"sys.ID": %d,"sys.QName": "app1pkg.options"}}]}`, istructs.FirstBaseUserWSID)
 	vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect400())
+}
+
+func TestSelectFromNestedTables(t *testing.T) {
+	require := require.New(t)
+	vit := it.NewVIT(t, &it.SharedConfig_App1)
+	defer vit.TearDown()
+
+	ws := vit.WS(istructs.AppQName_test1_app1, "test_ws")
+	body := `{"cuds": [
+		{"fields":{"sys.ID": 1,"sys.QName": "app1pkg.Root", "FldRoot": 2}},
+		{"fields":{"sys.ID": 2,"sys.QName": "app1pkg.Nested", "sys.ParentID":1,"sys.Container": "Nested","FldNested":3}},
+		{"fields":{"sys.ID": 3,"sys.QName": "app1pkg.Third", "Fld1": 42,"sys.ParentID":2,"sys.Container": "Third"}}
+	]}`
+	vit.PostWS(ws, "c.sys.CUD", body).NewID()
+
+	t.Run("normal select", func(t *testing.T) {
+		body = `{"args":{"Schema":"app1pkg.Root"},"elements": [
+			{"fields": ["FldRoot"]},
+			{"path": "Nested","fields": ["FldNested"]},
+			{"path": "Nested/Third","fields": ["Fld1"]}
+		]}`
+		resp := vit.PostWS(ws, "q.sys.Collection", body)
+
+		require.EqualValues(2, resp.Sections[0].Elements[0][0][0][0])
+		require.EqualValues(3, resp.Sections[0].Elements[0][1][0][0])
+		require.EqualValues(42, resp.Sections[0].Elements[0][2][0][0])
+	})
+
+	t.Run("unknown nested table", func(t *testing.T) {
+		t.Run("2nd level", func(t *testing.T) {
+			body = `{"args":{"Schema":"app1pkg.Root"},"elements": [
+				{"fields": ["FldRoot"]},
+				{"path": "unknownNested","fields": ["FldNested"]},
+				{"path": "Nested/Third","fields": ["Fld1"]}
+			]}`
+			vit.PostWS(ws, "q.sys.Collection", body, coreutils.Expect400("unknown nested table unknownNested"))
+		})
+		t.Run("3rd level", func(t *testing.T) {
+			body = `{"args":{"Schema":"app1pkg.Root"},"elements": [
+				{"fields": ["FldRoot"]},
+				{"path": "Nested","fields": ["FldNested"]},
+				{"path": "Nested/unknownThird","fields": ["Fld1"]}
+			]}`
+			vit.PostWS(ws, "q.sys.Collection", body, coreutils.Expect400("unknown nested table unknownThird"))
+
+			body = `{"args":{"Schema":"app1pkg.Root"},"elements": [
+				{"fields": ["FldRoot"]},
+				{"path": "Nested","fields": ["FldNested"]},
+				{"path": "unknownNested/Third","fields": ["Fld1"]}
+			]}`
+			vit.PostWS(ws, "q.sys.Collection", body, coreutils.Expect400("unknown nested table unknownNested"))
+		})
+	})
+
+	t.Run("unknown field in nested table", func(t *testing.T) {
+		t.Run("2nd level", func(t *testing.T) {
+			body = `{"args":{"Schema":"app1pkg.Root"},"elements": [
+				{"fields": ["FldRoot"]},
+				{"path": "Nested","fields": ["unknown"]},
+				{"path": "Nested/Third","fields": ["Fld1"]}
+			]}`
+			vit.PostWS(ws, "q.sys.Collection", body, coreutils.Expect400("'unknown' that is unexpected among fields of app1pkg.Nested"))
+		})
+		t.Run("3rd level", func(t *testing.T) {
+			body = `{"args":{"Schema":"app1pkg.Root"},"elements": [
+				{"fields": ["FldRoot"]},
+				{"path": "Nested","fields": ["FldNested"]},
+				{"path": "Nested/Third","fields": ["unknown"]}
+			]}`
+			vit.PostWS(ws, "q.sys.Collection", body, coreutils.Expect400("'unknown' that is unexpected among fields of app1pkg.Third"))
+		})
+	})
+
+	t.Run("nested requested in a table that has no nested tables", func(t *testing.T) {
+		t.Run("in root", func(t *testing.T) {
+			// cdoc2.field1 exists but it is not a nested table
+			body = `{"args":{"Schema":"app1pkg.cdoc2"},"elements": [
+				{"path": "field1","fields": ["SomeField"]}
+				]}`
+			vit.PostWS(ws, "q.sys.Collection", body, coreutils.Expect400("unknown nested table field1"))
+		})
+		t.Run("in nested", func(t *testing.T) {
+			// Root.Nested.Third.Fld1 field exists but is not a nested table
+			body = `{"args":{"Schema":"app1pkg.Root"},"elements": [
+				{"path": "Nested/Third/Fld1","fields": ["SomeField"]}
+			]}`
+			vit.PostWS(ws, "q.sys.Collection", body, coreutils.Expect400("unknown nested table Fld1"))
+		})
+	})
+}
+
+func TestFieldsAuthorization_OpForbidden(t *testing.T) {
+	t.Skip("temporarily skipped. To be rolled back in https://github.com/voedger/voedger/issues/3199")
+	logger.SetLogLevel(logger.LogLevelVerbose)
+	defer logger.SetLogLevel(logger.LogLevelInfo)
+	vit := it.NewVIT(t, &it.SharedConfig_App1)
+	defer vit.TearDown()
+
+	ws := vit.WS(istructs.AppQName_test1_app1, "test_ws")
+
+	t.Run("activate", func(t *testing.T) {
+		body := `{"cuds": [{"fields": {"sys.ID": 1,"sys.QName": "app1pkg.DocActivateDenied"}}]}`
+		id := vit.PostWS(ws, "c.sys.CUD", body).NewID()
+
+		body = fmt.Sprintf(`{"cuds": [{"sys.ID":%d,"fields": {"sys.IsActive":true}}]}`, id)
+		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] ACTIVATE", "operation forbidden"))
+	})
+
+	t.Run("deactivate", func(t *testing.T) {
+		body := `{"cuds": [{"fields": {"sys.ID": 1,"sys.QName": "app1pkg.DocDeactivateDenied"}}]}`
+		id := vit.PostWS(ws, "c.sys.CUD", body).NewID()
+
+		body = fmt.Sprintf(`{"cuds": [{"sys.ID":%d,"fields": {"sys.IsActive":false}}]}`, id)
+		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] DEACTIVATE", "operation forbidden"))
+	})
+
+	t.Run("field insert", func(t *testing.T) {
+		// allowed
+		body := `{"cuds": [{"fields": {"sys.ID": 1,"sys.QName": "app1pkg.DocFieldInsertDenied","FldAllowed":42}}]}`
+		vit.PostWS(ws, "c.sys.CUD", body)
+
+		// denied
+		body = `{"cuds": [{"fields": {"sys.ID": 1,"sys.QName": "app1pkg.DocFieldInsertDenied","FldDenied":42}}]}`
+		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] INSERT", "operation forbidden"))
+	})
+
+	t.Run("field update", func(t *testing.T) {
+		body := `{"cuds": [{"fields": {"sys.ID": 1,"sys.QName": "app1pkg.DocFieldUpdateDenied", "FldAllowed":42,"FldDenied":43}}]}`
+		id := vit.PostWS(ws, "c.sys.CUD", body).NewID()
+
+		// allowed
+		body = fmt.Sprintf(`{"cuds": [{"sys.ID":%d,"fields": {"FldAllowed":45}}]}`, id)
+		vit.PostWS(ws, "c.sys.CUD", body)
+
+		// denied
+		body = fmt.Sprintf(`{"cuds": [{"sys.ID":%d,"fields": {"FldDenied":46}}]}`, id)
+		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] UPDATE", "operation forbidden"))
+	})
+
+	// note: select authorization is tested in [TestDeniedResourcesAuthorization]
+}
+
+func TestErrors(t *testing.T) {
+	vit := it.NewVIT(t, &it.SharedConfig_App1)
+	defer vit.TearDown()
+
+	ws := vit.WS(istructs.AppQName_test1_app1, "test_ws")
+
+	t.Run("no QName on insert -> 400 bad request", func(t *testing.T) {
+		body := `{"cuds": [{"fields": {"sys.ID": 1,"FldAllowed":42}}]}`
+		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect400("failed to parse sys.QName"))
+	})
 }

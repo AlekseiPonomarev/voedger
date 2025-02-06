@@ -12,27 +12,23 @@ import (
 // abstract filter.
 type filter struct{}
 
-func (filter) And() func(func(appdef.IFilter) bool) { return func(func(appdef.IFilter) bool) {} }
+func (filter) And() []appdef.IFilter    { return nil }
+func (filter) Not() appdef.IFilter      { return nil }
+func (filter) Or() []appdef.IFilter     { return nil }
+func (filter) QNames() []appdef.QName   { return nil }
+func (filter) Tags() []appdef.QName     { return nil }
+func (filter) Types() []appdef.TypeKind { return nil }
+func (filter) WS() appdef.QName         { return appdef.NullQName }
 
-func (filter) Not() appdef.IFilter { return nil }
+// trueFilter realizes filter what always matches any type.
+//
+// # Supports:
+//   - appdef.IFilter.
+//   - fmt.Stringer
+type trueFilter struct{ filter }
 
-func (filter) Or() func(func(appdef.IFilter) bool) { return func(func(appdef.IFilter) bool) {} }
+func (trueFilter) Kind() appdef.FilterKind   { return appdef.FilterKind_True }
+func (trueFilter) Match(t appdef.IType) bool { return true }
+func (trueFilter) String() string            { return "TRUE" }
 
-func (filter) QNames() func(func(appdef.QName) bool) { return func(func(appdef.QName) bool) {} }
-
-func (filter) Tags() func(func(string) bool) { return func(func(string) bool) {} }
-
-func (filter) Types() func(func(appdef.TypeKind) bool) { return func(func(appdef.TypeKind) bool) {} }
-
-// allMatches returns types that match the filter.
-func allMatches(f appdef.IFilter, types appdef.SeqType) appdef.SeqType {
-	return func(visit func(appdef.IType) bool) {
-		for t := range types {
-			if f.Match(t) {
-				if !visit(t) {
-					return
-				}
-			}
-		}
-	}
-}
+var trueFlt *trueFilter = &trueFilter{}

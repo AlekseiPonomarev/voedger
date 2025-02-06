@@ -194,7 +194,7 @@ func TestVSqlUpdate_BasicUsage_DirectUpdate_View(t *testing.T) {
 	// p.ap1pkg.ApplyCategoryIdx will insert the single hardcoded record view.CategoryIdx(Name = category.Name, IntFld = 43, Dummy = 1, Val = 42) (see shared_cfgs.go)
 	categoryName := vit.NextName()
 	body := fmt.Sprintf(`{"cuds":[{"fields":{"sys.ID":1,"sys.QName":"app1pkg.category","name":"%s"}}]}`, categoryName)
-	vit.PostWS(ws, "c.sys.CUD", body)
+	lastTest1App1Offset := vit.PostWS(ws, "c.sys.CUD", body).CurrentWLogOffset
 
 	// check view values
 	body = `{"args":{"Query":"select * from app1pkg.CategoryIdx where IntFld = 43 and Dummy = 1"}, "elements":[{"fields":["Result"]}]}`
@@ -223,6 +223,7 @@ func TestVSqlUpdate_BasicUsage_DirectUpdate_View(t *testing.T) {
 			"Name":      newName,     // new value
 			"Val":       float64(42), // old value (hardcoded by the projector)
 			"sys.QName": "app1pkg.CategoryIdx",
+			"offs":      float64(lastTest1App1Offset),
 		}, m)
 	})
 
@@ -549,7 +550,7 @@ func TestVSqlUpdateValidateErrors(t *testing.T) {
 
 		// unlogged insert
 		"unlogged insert test1.app1.1.app1pkg.CategoryIdx set Val = 44, Name = 'x' where a = 1": "'where' clause is not allowed on view unlogged insert",
-		"unlogged insert test1.app1.1.app1pkg.category set Val = 44, Name = 'x'":                "unlogged insert is not allowed for records",
+		"unlogged insert test1.app1.1.app1pkg.category set Val = 44, Name = 'x'":                "unlogged insert is not allowed for records", //  how to get new ID?
 		"unlogged insert test1.app1.1.app1pkg.MockCmd set Val = 44, Name = 'x'":                 "view, CDoc or WDoc only expected",
 		"unlogged insert test1.app1.1.app1pkg.CategoryIdx set Val = null":                       "null value is not supported",
 	}

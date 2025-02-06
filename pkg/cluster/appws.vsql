@@ -18,7 +18,7 @@ ALTER WORKSPACE sys.AppWorkspaceWS (
 	);
 
 	TYPE VSqlUpdateParams (
-		Query varchar NOT NULL
+		Query varchar(65535) NOT NULL
 	);
 
 	TYPE VSqlUpdateResult (
@@ -29,4 +29,8 @@ ALTER WORKSPACE sys.AppWorkspaceWS (
 		COMMAND DeployApp(AppDeploymentDescriptor);
 		COMMAND VSqlUpdate(VSqlUpdateParams) RETURNS VSqlUpdateResult;
 	);
+
+	ROLE ClusterAdmin;
+
+	GRANT EXECUTE ON COMMAND DeployApp TO ClusterAdmin;
 );

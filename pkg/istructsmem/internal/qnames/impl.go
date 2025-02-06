@@ -77,10 +77,10 @@ func (names *QNames) collectAll(appDef appdef.IAppDef) error {
 	var err error
 
 	if appDef != nil {
-		for t := range appDef.Types {
+		for _, t := range appDef.Types() {
 			err = errors.Join(err,
 				names.collect(t.QName()))
-			if uu, ok := t.(appdef.IUniques); ok {
+			if uu, ok := t.(appdef.IWithUniques); ok {
 				for _, u := range uu.Uniques() {
 					err = errors.Join(err,
 						names.collect(u.Name()))

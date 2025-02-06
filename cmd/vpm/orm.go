@@ -9,13 +9,14 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
-	"golang.org/x/tools/imports"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"text/template"
+
+	"golang.org/x/tools/imports"
 
 	"github.com/spf13/cobra"
 	"github.com/voedger/voedger/pkg/appdef"
@@ -34,7 +35,6 @@ const (
 //go:embed ormtemplates/*
 var ormTemplatesFS embed.FS
 var reservedWords = []string{"type"}
-var uniqueProjectorCommandEvents = []any{}
 
 // newOrmCmd creates a new ORM command
 func newOrmCmd(params *vpmParams) *cobra.Command {
@@ -99,7 +99,7 @@ func getPkgAppDefObjs(
 		HeaderFileContent: headerContent,
 	}
 
-	for localName, fullPath := range appDef.Packages {
+	for localName, fullPath := range appDef.Packages() {
 		if fullPath == packagePath {
 			currentPkgLocalName = localName
 		}
@@ -132,11 +132,11 @@ func getPkgAppDefObjs(
 	}
 
 	// gather objects from the current package
-	for workspace := range appDef.Workspaces {
+	for _, workspace := range appDef.Workspaces() {
 		// add workspace itself to the list of objects as well
 		collectITypeObjs(workspace)(workspace)
 		// then add all types of the workspace
-		for typ := range workspace.Types {
+		for _, typ := range workspace.Types() {
 			collectITypeObjs(workspace)(typ)
 		}
 	}
@@ -251,10 +251,11 @@ func getOrmData(
 ) (pkgData map[ormPackageInfo][]interface{}) {
 	pkgData = make(map[ormPackageInfo][]interface{})
 	uniquePkgQNames := make(map[ormPackageInfo][]string)
+	uniqueProjectorCommandEvents := map[string]bool{}
 
 	for wsQName, objs := range iTypeObjsOfWS {
 		for _, obj := range objs {
-			processITypeObj(localName, pkgInfos, pkgData, uniquePkgQNames, wsQName, obj)
+			processITypeObj(localName, pkgInfos, pkgData, uniquePkgQNames, wsQName, obj, uniqueProjectorCommandEvents)
 		}
 	}
 
@@ -329,6 +330,7 @@ func processITypeObj(
 	uniquePkgQNames map[ormPackageInfo][]string,
 	wsQName appdef.QName,
 	obj appdef.IType,
+	uniqueProjectorCommandEvents map[string]bool,
 ) (newItem any) {
 	if obj == nil {
 		return nil
@@ -359,7 +361,7 @@ func processITypeObj(
 		}
 
 		// fetching fields
-		for _, field := range t.(appdef.IFields).Fields() {
+		for _, field := range t.(appdef.IWithFields).Fields() {
 			// skip sys fields
 			if slices.Contains(sysFields, field.Name()) {
 				continue
@@ -383,7 +385,7 @@ func processITypeObj(
 			}
 		}
 
-		if iContainers, ok := t.(appdef.IContainers); ok {
+		if iContainers, ok := t.(appdef.IWithContainers); ok {
 			for _, container := range iContainers.Containers() {
 				containerName := container.Name()
 				tableData.Containers = append(tableData.Containers, ormField{
@@ -405,32 +407,32 @@ func processITypeObj(
 		iProjectorEvents := t.Events()
 
 		// collecting projector events (Commands, CUDs, etc.)
-		iProjectorEvents.Enum(func(iProjectorEvent appdef.IProjectorEvent) {
-			ormObject := processITypeObj(localName, pkgInfos, pkgData, uniquePkgQNames, wsQName, iProjectorEvent.On())
-			// Avoiding double generation of the same Cmd_ORM object via
-			// checking if it already exists in other projector events
-			cmdOrmObj, ok := ormObject.(ormCommand)
-			skipGeneration := false
-			if ok {
-				skipGeneration = true
-				if !slices.ContainsFunc(uniqueProjectorCommandEvents, func(item any) bool {
-					return item.(ormCommand).QName == cmdOrmObj.QName
-				}) {
-					uniqueProjectorCommandEvents = append(uniqueProjectorCommandEvents, cmdOrmObj)
-					skipGeneration = false
+		for _, event := range iProjectorEvents {
+			for _, obj := range appdef.FilterMatches(event.Filter(), t.Workspace().Types()) {
+				ormObject := processITypeObj(localName, pkgInfos, pkgData, uniquePkgQNames, wsQName, obj, uniqueProjectorCommandEvents)
+				// Avoiding double generation of the same Cmd_ORM object via
+				// checking if it already exists in other projector events
+				cmdOrmObj, ok := ormObject.(ormCommand)
+				skipGeneration := false
+				if ok {
+					skipGeneration = true
+					if _, contains := uniqueProjectorCommandEvents[cmdOrmObj.QName]; !contains {
+						uniqueProjectorCommandEvents[cmdOrmObj.QName] = true
+						skipGeneration = false
+					}
+				}
+
+				if ormObject != nil {
+					ormProjectorItem.On = append(ormProjectorItem.On, ormProjectorEventItem{
+						ormPackageItem: extractOrmPackageItem(ormObject),
+						Projector:      ormProjectorItem,
+						Ops:            event.Ops(),
+						EventItem:      ormObject,
+						SkipGeneration: skipGeneration,
+					})
 				}
 			}
-
-			if ormObject != nil {
-				ormProjectorItem.On = append(ormProjectorItem.On, ormProjectorEventItem{
-					ormPackageItem: extractOrmPackageItem(ormObject),
-					Projector:      ormProjectorItem,
-					Kinds:          iProjectorEvent.Kind(),
-					EventItem:      ormObject,
-					SkipGeneration: skipGeneration,
-				})
-			}
-		})
+		}
 
 		newItem = ormProjectorItem
 	case appdef.IWorkspace:
@@ -445,6 +447,7 @@ func processITypeObj(
 			uniquePkgQNames,
 			wsQName,
 			t.(appdef.IFunction).Param(),
+			uniqueProjectorCommandEvents,
 		)
 
 		var unloggedArgumentObj interface{}
@@ -456,6 +459,7 @@ func processITypeObj(
 				uniquePkgQNames,
 				wsQName,
 				iCommand.UnloggedParam(),
+				uniqueProjectorCommandEvents,
 			)
 		}
 
@@ -466,6 +470,7 @@ func processITypeObj(
 			uniquePkgQNames,
 			wsQName,
 			t.(appdef.IFunction).Result(),
+			uniqueProjectorCommandEvents,
 		); resultObj != nil {
 			if tableData, ok := resultObj.(ormTableItem); ok {
 				resultFields = tableData.Fields
@@ -489,6 +494,7 @@ func processITypeObj(
 				uniquePkgQNames,
 				wsQName,
 				t.(appdef.IObject),
+				uniqueProjectorCommandEvents,
 			)
 		}
 

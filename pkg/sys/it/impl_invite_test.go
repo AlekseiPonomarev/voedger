@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
 	"github.com/voedger/voedger/pkg/coreutils"
 	"github.com/voedger/voedger/pkg/iauthnz"
 	"github.com/voedger/voedger/pkg/istructs"
@@ -42,7 +43,7 @@ func TestInvite_BasicUsage(t *testing.T) {
 	updateRolesEmailTemplate := "text:" + invite.EmailTemplatePlaceholder_Roles
 	updateRolesEmailSubject := "your roles are updated"
 	expireDatetime := vit.Now().UnixMilli()
-	updatedRoles := "updated.Roles"
+	updatedRoles := "app1pkg.Updated"
 
 	email1 := fmt.Sprintf("testinvite_basicusage_%d@123.com", vit.NextNumber())
 	email2 := fmt.Sprintf("testinvite_basicusage_%d@123.com", vit.NextNumber())
@@ -54,11 +55,11 @@ func TestInvite_BasicUsage(t *testing.T) {
 	prn := vit.GetPrincipal(istructs.AppQName_test1_app1, it.TestEmail)
 	ws := vit.CreateWorkspace(wsParams, prn)
 
-	initiateUpdateInviteRoles := func(inviteID int64) {
+	initiateUpdateInviteRoles := func(inviteID istructs.RecordID) {
 		vit.PostWS(ws, "c.sys.InitiateUpdateInviteRoles", fmt.Sprintf(`{"args":{"InviteID":%d,"Roles":"%s","EmailTemplate":"%s","EmailSubject":"%s"}}`, inviteID, updatedRoles, updateRolesEmailTemplate, updateRolesEmailSubject))
 	}
 
-	findCDocInviteByID := func(inviteID int64) []interface{} {
+	findCDocInviteByID := func(inviteID istructs.RecordID) []interface{} {
 		return vit.PostWS(ws, "q.sys.Collection", fmt.Sprintf(`
 			{"args":{"Schema":"sys.Invite"},
 			"elements":[{"fields":[
@@ -324,7 +325,7 @@ func TestInactiveCDocSubject(t *testing.T) {
 	vit.PostWS(parentWS, "c.sys.CUD", cudBody, coreutils.WithAuthorizeBy(newPrn.Token), coreutils.Expect403())
 }
 
-func testOverwriteRoles(t *testing.T, vit *it.VIT, ws *it.AppWorkspace, email string, inviteID int64) (verificationCode string) {
+func testOverwriteRoles(t *testing.T, vit *it.VIT, ws *it.AppWorkspace, email string, inviteID istructs.RecordID) (verificationCode string) {
 	require := require.New(t)
 
 	// reinvite when invitation is not accepted yet -> roles must be overwritten
@@ -340,4 +341,24 @@ func testOverwriteRoles(t *testing.T, vit *it.VIT, ws *it.AppWorkspace, email st
 	require.Equal(newRoles, resp.SectionRow()[0].(string))
 
 	return verificationCode
+}
+
+func TestRejectInvitationOnDifferentLogin(t *testing.T) {
+	vit := it.NewVIT(t, &it.SharedConfig_App1)
+	defer vit.TearDown()
+
+	email := fmt.Sprintf("testcancelsentinvite_%d@123.com", vit.NextNumber())
+	login := vit.SignUp(email, "1", istructs.AppQName_test1_app1)
+	loginPrn := vit.SignIn(login)
+	wsParams := it.SimpleWSParams("TestCancelSentInvite_ws")
+	ws := vit.CreateWorkspace(wsParams, loginPrn)
+	inviteID := InitiateInvitationByEMail(vit, ws, vit.Now().UnixMilli(), email, initialRoles, inviteEmailTemplate, inviteEmailSubject)
+	actualEmail := vit.CaptureEmail()
+	verificationCode := actualEmail.Body[:6]
+	WaitForInviteState(vit, ws, inviteID, invite.State_ToBeInvited, invite.State_Invited)
+
+	// simulate accepting invitation by different login
+	differentLogin := vit.GetPrincipal(istructs.AppQName_test1_app1, "login")
+	InitiateJoinWorkspace(vit, ws, inviteID, differentLogin, verificationCode,
+		coreutils.Expect400(fmt.Sprintf("invitation was sent to %s but current login is login", email)))
 }

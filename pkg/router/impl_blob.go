@@ -1,429 +1,111 @@
 /*
- * Copyright (c) 2022-present unTill Pro, Ltd.
+ * Copyright (c) 2025-present unTill Software Development Group B.V.
+ * @author Denis Gribanov
  */
 
 package router
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"mime"
-	"mime/multipart"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/gorilla/mux"
-
-	ibus "github.com/voedger/voedger/staging/src/github.com/untillpro/airs-ibus"
-
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/coreutils"
 	"github.com/voedger/voedger/pkg/coreutils/utils"
 	"github.com/voedger/voedger/pkg/goutils/logger"
-	"github.com/voedger/voedger/pkg/iblobstorage"
-	"github.com/voedger/voedger/pkg/iprocbus"
 	"github.com/voedger/voedger/pkg/istructs"
+	blobprocessor "github.com/voedger/voedger/pkg/processors/blobber"
 )
 
-type blobWriteDetailsSingle struct {
-	name     string
-	mimeType string
-}
-
-type blobWriteDetailsMultipart struct {
-	boundary string
-}
-
-type blobReadDetails struct {
-	blobID istructs.RecordID
-}
-
-type blobBaseMessage struct {
-	req         *http.Request
-	resp        http.ResponseWriter
-	doneChan    chan struct{}
-	wsid        istructs.WSID
-	appQName    appdef.AppQName
-	header      map[string][]string
-	blobMaxSize iblobstorage.BLOBMaxSizeType
-}
-
-type blobMessage struct {
-	blobBaseMessage
-	blobDetails interface{}
-}
-
-func (bm *blobBaseMessage) Release() {
-	bm.req.Body.Close()
-}
-
-func blobReadMessageHandler(bbm blobBaseMessage, blobReadDetails blobReadDetails, blobStorage iblobstorage.IBLOBStorage, bus ibus.IBus, busTimeout time.Duration) {
-	defer close(bbm.doneChan)
-
-	// request to VVM to check the principalToken
-	req := ibus.Request{
-		Method:   ibus.HTTPMethodPOST,
-		WSID:     bbm.wsid,
-		AppQName: bbm.appQName.String(),
-		Resource: "q.sys.DownloadBLOBAuthnz",
-		Header:   bbm.header,
-		Body:     []byte(`{}`),
-		Host:     localhost,
+func newErrorResponder(w http.ResponseWriter) blobprocessor.ErrorResponder {
+	return func(statusCode int, args ...interface{}) {
+		w.WriteHeader(statusCode)
+		_, _ = w.Write([]byte(fmt.Sprint(args...)))
 	}
-	blobHelperResp, _, _, err := bus.SendRequest2(bbm.req.Context(), req, busTimeout)
-	if err != nil {
-		WriteTextResponse(bbm.resp, "failed to exec q.sys.DownloadBLOBAuthnz: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if blobHelperResp.StatusCode != http.StatusOK {
-		WriteTextResponse(bbm.resp, "q.sys.DownloadBLOBAuthnz returned error: "+string(blobHelperResp.Data), blobHelperResp.StatusCode)
-		return
-	}
+}
 
-	// read the BLOB
-	key := iblobstorage.KeyType{
-		AppID: istructs.ClusterAppID_sys_blobber,
-		WSID:  bbm.wsid,
-		ID:    blobReadDetails.blobID,
-	}
-	stateWriterDiscard := func(state iblobstorage.BLOBState) error {
-		if state.Status != iblobstorage.BLOBStatus_Completed {
-			return errors.New("blob is not completed")
+func (s *httpService) blobHTTPRequestHandler_Write() http.HandlerFunc {
+	return func(resp http.ResponseWriter, req *http.Request) {
+		if logger.IsVerbose() {
+			logger.Verbose("blob write request:", req.URL.String())
 		}
-		if len(state.Error) > 0 {
-			return errors.New(state.Error)
-		}
-		bbm.resp.Header().Set(coreutils.ContentType, state.Descr.MimeType)
-		bbm.resp.Header().Add("Content-Disposition", fmt.Sprintf(`attachment;filename="%s"`, state.Descr.Name))
-		bbm.resp.WriteHeader(http.StatusOK)
-		return nil
-	}
-	if err := blobStorage.ReadBLOB(bbm.req.Context(), key, stateWriterDiscard, bbm.resp); err != nil {
-		logger.Error(fmt.Sprintf("failed to read or send BLOB: id %d, appQName %s, wsid %d: %s", blobReadDetails.blobID, bbm.appQName, bbm.wsid, err.Error()))
-		if errors.Is(err, iblobstorage.ErrBLOBNotFound) {
-			WriteTextResponse(bbm.resp, err.Error(), http.StatusNotFound)
+		appQName, wsid, headers, ok := parseURLParams(req, resp)
+		if !ok {
 			return
 		}
-		WriteTextResponse(bbm.resp, err.Error(), http.StatusInternalServerError)
+		if !s.blobRequestHandler.HandleWrite(appQName, wsid, headers, req.Context(), req.URL.Query(),
+			newBLOBOKResponseIniter(resp), req.Body, func(statusCode int, args ...interface{}) {
+				WriteTextResponse(resp, fmt.Sprint(args...), statusCode)
+			}, s.requestSender) {
+			resp.WriteHeader(http.StatusServiceUnavailable)
+			resp.Header().Add("Retry-After", strconv.Itoa(DefaultRetryAfterSecondsOn503))
+		}
 	}
 }
 
-func writeBLOB(ctx context.Context, wsid istructs.WSID, appQName string, header map[string][]string, resp http.ResponseWriter,
-	blobName, blobMimeType string, blobStorage iblobstorage.IBLOBStorage, body io.ReadCloser,
-	blobMaxSize iblobstorage.BLOBMaxSizeType, bus ibus.IBus, busTimeout time.Duration) (blobID istructs.RecordID) {
-	// request VVM for check the principalToken and get a blobID
-	req := ibus.Request{
-		Method:   ibus.HTTPMethodPOST,
-		WSID:     wsid,
-		AppQName: appQName,
-		Resource: "c.sys.UploadBLOBHelper",
-		Body:     []byte(`{}`),
-		Header:   header,
-		Host:     localhost,
-	}
-	blobHelperResp, _, _, err := bus.SendRequest2(ctx, req, busTimeout)
-	if err != nil {
-		WriteTextResponse(resp, "failed to exec c.sys.UploadBLOBHelper: "+err.Error(), http.StatusInternalServerError)
-		return 0
-	}
-	if blobHelperResp.StatusCode != http.StatusOK {
-		WriteTextResponse(resp, "c.sys.UploadBLOBHelper returned error: "+string(blobHelperResp.Data), blobHelperResp.StatusCode)
-		return 0
-	}
-	cmdResp := map[string]interface{}{}
-	if err := json.Unmarshal(blobHelperResp.Data, &cmdResp); err != nil {
-		WriteTextResponse(resp, "failed to json-unmarshal c.sys.UploadBLOBHelper result: "+err.Error(), http.StatusInternalServerError)
-		return 0
-	}
-	newIDs := cmdResp["NewIDs"].(map[string]interface{})
-
-	blobID = istructs.RecordID(newIDs["1"].(float64))
-	// write the BLOB
-	key := iblobstorage.KeyType{
-		AppID: istructs.ClusterAppID_sys_blobber,
-		WSID:  wsid,
-		ID:    blobID,
-	}
-	descr := iblobstorage.DescrType{
-		Name:     blobName,
-		MimeType: blobMimeType,
-	}
-
-	if err := blobStorage.WriteBLOB(ctx, key, descr, body, blobMaxSize); err != nil {
-		if errors.Is(err, iblobstorage.ErrBLOBSizeQuotaExceeded) {
-			WriteTextResponse(resp, fmt.Sprintf("blob size quouta exceeded (max %d allowed)", blobMaxSize), http.StatusForbidden)
-			return 0
+func (s *httpService) blobHTTPRequestHandler_Read() http.HandlerFunc {
+	return func(resp http.ResponseWriter, req *http.Request) {
+		if logger.IsVerbose() {
+			logger.Verbose("blob read request:", req.URL.String())
 		}
-		WriteTextResponse(resp, err.Error(), http.StatusInternalServerError)
-		return 0
-	}
-
-	// set WDoc<sys.BLOB>.status = BLOBStatus_Completed
-	req.Resource = "c.sys.CUD"
-	req.Body = []byte(fmt.Sprintf(`{"cuds":[{"sys.ID": %d,"fields":{"status":%d}}]}`, blobID, iblobstorage.BLOBStatus_Completed))
-	cudWDocBLOBUpdateResp, _, _, err := bus.SendRequest2(ctx, req, busTimeout)
-	if err != nil {
-		WriteTextResponse(resp, "failed to exec c.sys.CUD: "+err.Error(), http.StatusInternalServerError)
-		return 0
-	}
-	if cudWDocBLOBUpdateResp.StatusCode != http.StatusOK {
-		WriteTextResponse(resp, "c.sys.CUD returned error: "+string(cudWDocBLOBUpdateResp.Data), cudWDocBLOBUpdateResp.StatusCode)
-		return 0
-	}
-
-	return blobID
-}
-
-func blobWriteMessageHandlerMultipart(bbm blobBaseMessage, blobStorage iblobstorage.IBLOBStorage, boundary string,
-	bus ibus.IBus, busTimeout time.Duration) {
-	defer close(bbm.doneChan)
-
-	r := multipart.NewReader(bbm.req.Body, boundary)
-	var part *multipart.Part
-	var err error
-	blobIDs := []string{}
-	partNum := 0
-	for err == nil {
-		part, err = r.NextPart()
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				WriteTextResponse(bbm.resp, "failed to parse multipart: "+err.Error(), http.StatusBadRequest)
-				return
-			} else if partNum == 0 {
-				WriteTextResponse(bbm.resp, "empty multipart request", http.StatusBadRequest)
-				return
-			}
-			break
-		}
-		contentDisposition := part.Header.Get(coreutils.ContentDisposition)
-		mediaType, params, err := mime.ParseMediaType(contentDisposition)
-		if err != nil {
-			WriteTextResponse(bbm.resp, fmt.Sprintf("failed to parse Content-Disposition of part number %d: %s", partNum, contentDisposition), http.StatusBadRequest)
-		}
-		if mediaType != "form-data" {
-			WriteTextResponse(bbm.resp, fmt.Sprintf("unsupported ContentDisposition mediaType of part number %d: %s", partNum, mediaType), http.StatusBadRequest)
-		}
-		contentType := part.Header.Get(coreutils.ContentType)
-		if len(contentType) == 0 {
-			contentType = coreutils.ApplicationXBinary
-		}
-		part.Header[coreutils.Authorization] = bbm.header[coreutils.Authorization] // add auth header for c.sys.*BLOBHelper
-		blobID := writeBLOB(bbm.req.Context(), bbm.wsid, bbm.appQName.String(), part.Header, bbm.resp,
-			params["name"], contentType, blobStorage, part, bbm.blobMaxSize, bus, busTimeout)
-		if blobID == 0 {
-			return // request handled
-		}
-		blobIDs = append(blobIDs, utils.UintToString(blobID))
-		partNum++
-	}
-	WriteTextResponse(bbm.resp, strings.Join(blobIDs, ","), http.StatusOK)
-}
-
-func blobWriteMessageHandlerSingle(bbm blobBaseMessage, blobWriteDetails blobWriteDetailsSingle, blobStorage iblobstorage.IBLOBStorage, header map[string][]string,
-	bus ibus.IBus, busTimeout time.Duration) {
-	defer close(bbm.doneChan)
-
-	blobID := writeBLOB(bbm.req.Context(), bbm.wsid, bbm.appQName.String(), header, bbm.resp, blobWriteDetails.name,
-		blobWriteDetails.mimeType, blobStorage, bbm.req.Body, bbm.blobMaxSize, bus, busTimeout)
-	if blobID > 0 {
-		WriteTextResponse(bbm.resp, utils.UintToString(blobID), http.StatusOK)
-	}
-}
-
-// ctx here is VVM context. It used to track VVM shutdown. Blobber will use the request's context
-func blobMessageHandler(vvmCtx context.Context, sc iprocbus.ServiceChannel, blobStorage iblobstorage.IBLOBStorage, bus ibus.IBus, busTimeout time.Duration) {
-	for vvmCtx.Err() == nil {
-		select {
-		case mesIntf := <-sc:
-			blobMessage := mesIntf.(blobMessage)
-			switch blobDetails := blobMessage.blobDetails.(type) {
-			case blobReadDetails:
-				blobReadMessageHandler(blobMessage.blobBaseMessage, blobDetails, blobStorage, bus, busTimeout)
-			case blobWriteDetailsSingle:
-				blobWriteMessageHandlerSingle(blobMessage.blobBaseMessage, blobDetails, blobStorage, blobMessage.header, bus, busTimeout)
-			case blobWriteDetailsMultipart:
-				blobWriteMessageHandlerMultipart(blobMessage.blobBaseMessage, blobStorage, blobDetails.boundary, bus, busTimeout)
-			}
-		case <-vvmCtx.Done():
+		appQName, wsid, headers, ok := parseURLParams(req, resp)
+		if !ok {
 			return
 		}
+		vars := mux.Vars(req)
+		existingBLOBIDOrSUID := vars[URLPlaceholder_blobIDOrSUUID]
+		if !s.blobRequestHandler.HandleRead(appQName, wsid, headers, req.Context(),
+			newBLOBOKResponseIniter(resp), func(statusCode int, args ...interface{}) {
+				WriteTextResponse(resp, fmt.Sprint(args...), statusCode)
+			}, existingBLOBIDOrSUID, s.requestSender) {
+			resp.WriteHeader(http.StatusServiceUnavailable)
+			resp.Header().Add("Retry-After", strconv.Itoa(DefaultRetryAfterSecondsOn503))
+		}
 	}
 }
 
-func (s *httpService) blobRequestHandler(resp http.ResponseWriter, req *http.Request, details interface{}) {
+func parseURLParams(req *http.Request, resp http.ResponseWriter) (appQName appdef.AppQName, wsid istructs.WSID, headers http.Header, ok bool) {
 	vars := mux.Vars(req)
-	wsid, err := strconv.ParseUint(vars[WSID], utils.DecimalBase, utils.BitSize64)
+	wsidUint, err := strconv.ParseUint(vars[URLPlaceholder_wsid], utils.DecimalBase, utils.BitSize64)
 	if err != nil {
 		// notest: checked by router url rule
 		panic(err)
 	}
-	mes := blobMessage{
-		blobBaseMessage: blobBaseMessage{
-			req:         req,
-			resp:        resp,
-			wsid:        istructs.WSID(wsid),
-			doneChan:    make(chan struct{}),
-			appQName:    appdef.NewAppQName(vars[AppOwner], vars[AppName]),
-			header:      req.Header,
-			blobMaxSize: s.BLOBMaxSize,
-		},
-		blobDetails: details,
-	}
-	if _, ok := mes.blobBaseMessage.header[coreutils.Authorization]; !ok {
+	headers = maps.Clone(req.Header)
+	if _, ok := headers[coreutils.Authorization]; !ok {
+		// no token among headers -> look among cookies
+		// no token among cookies as well -> just do nothing, 403 will happen on call helper commands further in BLOBs processor
 		cookie, err := req.Cookie(coreutils.Authorization)
-		if err != nil && !errors.Is(err, http.ErrNoCookie) {
-			// notest
-			panic(err)
-		}
-		val, err := url.QueryUnescape(cookie.Value)
-		if err != nil {
-			// notest
-			panic(err)
-		}
-		// authorization token in cookies -> q.sys.DownloadBLOBAuthnz requires it in headers
-		mes.blobBaseMessage.header[coreutils.Authorization] = []string{val}
-	}
-	if !s.BlobberParams.procBus.Submit(0, 0, mes) {
-		resp.WriteHeader(http.StatusServiceUnavailable)
-		resp.Header().Add("Retry-After", strconv.Itoa(s.BlobberParams.RetryAfterSecondsOn503))
-		return
-	}
-	<-mes.doneChan
-}
-
-func (s *httpService) blobReadRequestHandler() http.HandlerFunc {
-	return func(resp http.ResponseWriter, req *http.Request) {
-		vars := mux.Vars(req)
-		blobID, err := strconv.ParseUint(vars[blobID], utils.DecimalBase, utils.BitSize64)
-		if err != nil {
-			// notest: checked by router url rule
-			panic(err)
-		}
-		principalToken := headerOrCookieAuth(resp, req)
-		if len(principalToken) == 0 {
-			return
-		}
-		blobReadDetails := blobReadDetails{
-			blobID: istructs.RecordID(blobID),
-		}
-		s.blobRequestHandler(resp, req, blobReadDetails)
-	}
-}
-
-func (s *httpService) blobWriteRequestHandler() http.HandlerFunc {
-	return func(resp http.ResponseWriter, req *http.Request) {
-		principalToken, isHandled := headerAuth(resp, req)
-		if len(principalToken) == 0 {
-			if !isHandled {
-				writeUnauthorized(resp)
-			}
-			return
-		}
-
-		queryParamName, queryParamMimeType, boundary, ok := getBlobParams(resp, req)
-		if !ok {
-			return
-		}
-
-		if len(queryParamName) > 0 {
-			s.blobRequestHandler(resp, req, blobWriteDetailsSingle{
-				name:     queryParamName,
-				mimeType: queryParamMimeType,
-			})
-		} else {
-			s.blobRequestHandler(resp, req, blobWriteDetailsMultipart{
-				boundary: boundary,
-			})
-		}
-	}
-}
-
-func headerAuth(rw http.ResponseWriter, req *http.Request) (principalToken string, isHandled bool) {
-	authHeader := req.Header.Get(coreutils.Authorization)
-	if len(authHeader) > 0 {
-		if len(authHeader) < bearerPrefixLen || authHeader[:bearerPrefixLen] != coreutils.BearerPrefix {
-			writeUnauthorized(rw)
-			return "", true
-		}
-		return authHeader[bearerPrefixLen:], false
-	}
-	return "", false
-}
-
-func headerOrCookieAuth(rw http.ResponseWriter, req *http.Request) (principalToken string) {
-	principalToken, isHandled := headerAuth(rw, req)
-	if isHandled {
-		return ""
-	}
-	if len(principalToken) > 0 {
-		return principalToken
-	}
-	for _, c := range req.Cookies() {
-		if c.Name == coreutils.Authorization {
-			val, err := url.QueryUnescape(c.Value)
+		if !errors.Is(err, http.ErrNoCookie) {
 			if err != nil {
-				WriteTextResponse(rw, "failed to unescape cookie '"+c.Value+"'", http.StatusBadRequest)
-				return ""
+				// notest
+				panic(err)
 			}
-			if len(val) < bearerPrefixLen || val[:bearerPrefixLen] != coreutils.BearerPrefix {
-				writeUnauthorized(rw)
-				return ""
+			val, err := url.QueryUnescape(cookie.Value)
+			if err != nil {
+				WriteTextResponse(resp, "failed to unescape cookie '"+cookie.Value+"'", http.StatusBadRequest)
+				return appQName, wsid, headers, false
 			}
-			return val[bearerPrefixLen:]
+			// authorization token in cookies -> q.sys.DownloadBLOBAuthnz requires it in headers
+			headers[coreutils.Authorization] = []string{val}
 		}
 	}
-	writeUnauthorized(rw)
-	return ""
+	appQName = appdef.NewAppQName(vars[URLPlaceholder_appOwner], vars[URLPlaceholder_appName])
+	return appQName, istructs.WSID(wsidUint), headers, true
 }
 
-// determines BLOBs write kind: name+mimeType in query params -> single BLOB, body is BLOB content, otherwise -> body is multipart/form-data
-// (is multipart/form-data) == len(boundary) > 0
-func getBlobParams(rw http.ResponseWriter, req *http.Request) (name, mimeType, boundary string, ok bool) {
-	badRequest := func(msg string) {
-		WriteTextResponse(rw, msg, http.StatusBadRequest)
-	}
-	values := req.URL.Query()
-	nameQuery, isSingleBLOB := values["name"]
-	mimeTypeQuery, hasMimeType := values["mimeType"]
-	if (isSingleBLOB && !hasMimeType) || (!isSingleBLOB && hasMimeType) {
-		badRequest("both name and mimeType query params must be specified")
-		return
-	}
-
-	contentType := req.Header.Get(coreutils.ContentType)
-	if isSingleBLOB {
-		if contentType == "multipart/form-data" {
-			badRequest(`name+mimeType query params and "multipart/form-data" Content-Type header are mutual exclusive`)
-			return
+func newBLOBOKResponseIniter(r http.ResponseWriter) func(headersKV ...string) io.Writer {
+	return func(headersKV ...string) io.Writer {
+		for i := 0; i < len(headersKV); i += 2 {
+			r.Header().Set(headersKV[i], headersKV[i+1])
 		}
-		name = nameQuery[0]
-		mimeType = mimeTypeQuery[0]
-		ok = true
-		return
+		r.WriteHeader(http.StatusOK)
+		return r
 	}
-	if len(contentType) == 0 {
-		badRequest(`neither "name"+"mimeType" query params nor Content-Type header is not provided`)
-		return
-	}
-	mediaType, params, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		badRequest("failed ot parse Content-Type header: " + contentType)
-		return
-	}
-	if mediaType != "multipart/form-data" {
-		badRequest("name+mimeType query params are not provided -> Content-Type must be mutipart/form-data but actual is " + contentType)
-		return
-	}
-	boundary = params["boundary"]
-	if len(boundary) == 0 {
-		badRequest("boundary of multipart/form-data is not specified")
-		return
-	}
-	return name, mimeType, boundary, true
 }

@@ -6,12 +6,12 @@ package vit
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/voedger/voedger/pkg/extensionpoints"
 	"github.com/voedger/voedger/pkg/iauthnz"
 	"github.com/voedger/voedger/pkg/parser"
+	"github.com/voedger/voedger/pkg/state"
 	"github.com/voedger/voedger/pkg/sys/smtp"
 	"github.com/voedger/voedger/pkg/sys/sysprovide"
 	builtinapps "github.com/voedger/voedger/pkg/vvm/builtin"
@@ -121,7 +121,19 @@ func ProvideApp2WithJob(apis builtinapps.APIs, cfg *istructsmem.AppConfigType, e
 	cfg.AddJobs(istructsmem.BuiltinJob{
 		Name: appdef.NewQName(app2PkgName, "Job1_builtin"),
 		Func: func(st istructs.IState, intents istructs.IIntents) error {
-			return errors.New("Job1_builtin works!!!!!!!!!!!!!! ")
+			jobsQName := appdef.NewQName("app2pkg", "Jobs")
+			kb, err := st.KeyBuilder(sys.Storage_View, jobsQName)
+			if err != nil {
+				return err
+			}
+			kb.PutInt64("RunUnixMilli", apis.ITime.Now().UnixMilli())
+			kb.PutInt32("Dummy1", 1)
+			vb, err := intents.NewValue(kb)
+			if err != nil {
+				return err
+			}
+			vb.PutInt32("Dummy2", 1)
+			return nil
 		},
 	})
 	return builtinapps.Def{
@@ -238,6 +250,7 @@ func ProvideApp1(apis builtinapps.APIs, cfg *istructsmem.AppConfigType, ep exten
 					}
 					b.PutInt32("Val", 42)
 					b.PutString("Name", cud.AsString("name"))
+					b.PutInt64(state.ColOffset, int64(event.WLogOffset())) // nolint G115
 				}
 				return nil
 			},
@@ -246,6 +259,8 @@ func ProvideApp1(apis builtinapps.APIs, cfg *istructsmem.AppConfigType, ep exten
 
 	cfg.Resources.Add(istructsmem.NewCommandFunction(appdef.NewQName(app1PkgName, "testCmd"), istructsmem.NullCommandExec))
 	cfg.Resources.Add(istructsmem.NewCommandFunction(appdef.NewQName(app1PkgName, "TestCmdRawArg"), istructsmem.NullCommandExec))
+	cfg.Resources.Add(istructsmem.NewCommandFunction(appdef.NewQName(app1PkgName, "TestDeniedCmd"), istructsmem.NullCommandExec))
+	cfg.Resources.Add(istructsmem.NewQueryFunction(appdef.NewQName(app1PkgName, "TestDeniedQuery"), istructsmem.NullQueryExec))
 
 	cfg.Resources.Add(istructsmem.NewQueryFunction(appdef.NewQName(app1PkgName, "QryIntents"), func(ctx context.Context, args istructs.ExecQueryArgs, callback istructs.ExecQueryCallback) (err error) {
 		kb, err := args.State.KeyBuilder(sys.Storage_Result, appdef.NewQName(app1PkgName, "QryIntentsResult"))

@@ -33,7 +33,6 @@ type cmdProc struct {
 	n10nBroker     in10n.IN10nBroker
 	time           coreutils.ITime
 	authenticator  iauthnz.IAuthenticator
-	authorizer     iauthnz.IAuthorizer
 	storeOp        pipeline.ISyncOperator
 }
 
@@ -44,7 +43,7 @@ type appPartition struct {
 
 // syncActualizerFactory is a factory(partitionID) that returns a fork operator with a sync actualizer per each application. Inside of an each actualizer - projectors for each application
 func ProvideServiceFactory(appParts appparts.IAppPartitions, tm coreutils.ITime,
-	n10nBroker in10n.IN10nBroker, metrics imetrics.IMetrics, vvm processors.VVMName, authenticator iauthnz.IAuthenticator, authorizer iauthnz.IAuthorizer,
+	n10nBroker in10n.IN10nBroker, metrics imetrics.IMetrics, vvm processors.VVMName, authenticator iauthnz.IAuthenticator,
 	secretReader isecrets.ISecretReader) ServiceFactory {
 	return func(commandsChannel CommandChannel) pipeline.IService {
 		cmdProc := &cmdProc{
@@ -52,7 +51,6 @@ func ProvideServiceFactory(appParts appparts.IAppPartitions, tm coreutils.ITime,
 			n10nBroker:     n10nBroker,
 			time:           tm,
 			authenticator:  authenticator,
-			authorizer:     authorizer,
 		}
 
 		return pipeline.NewService(func(vvmCtx context.Context) {
@@ -99,6 +97,7 @@ func ProvideServiceFactory(appParts appparts.IAppPartitions, tm coreutils.ITime,
 				pipeline.WireFunc("limitCallRate", limitCallRate),
 				pipeline.WireFunc("getWSDesc", getWSDesc),
 				pipeline.WireFunc("authenticate", cmdProc.authenticate),
+				pipeline.WireFunc("getPrincipalsRoles", getPrincipalsRoles),
 				pipeline.WireFunc("checkWSInitialized", checkWSInitialized),
 				pipeline.WireFunc("checkWSActive", checkWSActive),
 				pipeline.WireFunc("getIWorkspace", getIWorkspace),
@@ -112,10 +111,10 @@ func ProvideServiceFactory(appParts appparts.IAppPartitions, tm coreutils.ITime,
 				pipeline.WireFunc("getUnloggedArgsObject", getUnloggedArgsObject),
 				pipeline.WireFunc("checkArgsRefIntegrity", checkArgsRefIntegrity),
 				pipeline.WireFunc("parseCUDs", parseCUDs),
-				pipeline.WireFunc("checkCUDsAllowed", checkCUDsAllowed),
+				pipeline.WireFunc("checkCUDsAllowedInCUDCmdOnly", checkCUDsAllowedInCUDCmdOnly),
 				pipeline.WireSyncOperator("wrongArgsCatcher", &wrongArgsCatcher{}), // any error before -> wrap error into bad request http error
-				pipeline.WireFunc("authorizeCUDs", cmdProc.authorizeCUDs),
-				pipeline.WireFunc("checkIsActiveinCUDs", checkIsActiveInCUDs),
+				pipeline.WireFunc("checkIsActiveInCUDs", checkIsActiveInCUDs),
+				pipeline.WireFunc("authorizeRequestCUDs", cmdProc.authorizeRequestCUDs),
 				pipeline.WireFunc("writeCUDs", cmdProc.writeCUDs),
 				pipeline.WireFunc("getCmdResultBuilder", cmdProc.getCmdResultBuilder),
 				pipeline.WireFunc("buildCommandArgs", cmdProc.buildCommandArgs),
@@ -129,7 +128,7 @@ func ProvideServiceFactory(appParts appparts.IAppPartitions, tm coreutils.ITime,
 				pipeline.WireFunc("getIDGenerator", getIDGenerator),
 				pipeline.WireFunc("putPLog", cmdProc.putPLog),
 				pipeline.WireFunc("store", cmdProc.storeOp.DoSync),
-				pipeline.WireFunc("n10n", cmdProc.n10n),
+				pipeline.WireFunc("notifyAsyncActualizers", cmdProc.notifyAsyncActualizers),
 			)
 			// TODO: later make so that each partition has its own plogOffset, wsid has its own wlogOffset
 			defer cmdPipeline.Close()

@@ -40,6 +40,10 @@ func writeUnauthorized(rw http.ResponseWriter) {
 	WriteTextResponse(rw, "not authorized", http.StatusUnauthorized)
 }
 
+func writeNotImplemented(rw http.ResponseWriter) {
+	WriteTextResponse(rw, "not implemented", http.StatusNotImplemented)
+}
+
 type filteringWriter struct {
 	w io.Writer
 }

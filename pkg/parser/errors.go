@@ -39,9 +39,23 @@ var ErrMaxFieldLengthTooLarge = fmt.Errorf("maximum field length is %d", appdef.
 var ErrOnlyInsertForOdocOrORecord = errors.New("only INSERT allowed for ODoc or ORecord")
 var ErrPackageWithSameNameAlreadyIncludedInApp = errors.New("package with the same name already included in application")
 var ErrStorageDeclaredOnlyInSys = errors.New("storages are only declared in sys package")
+var ErrRecordFieldsOnlyInSys = errors.New("record fields are only allowed in sys package")
 var ErrPkgFolderNotFound = errors.New("pkg folder not found")
 var ErrGrantFollowsRevoke = errors.New("GRANT follows REVOKE in the same container")
 var ErrJobMustBeInAppWorkspace = errors.New("JOB is only allowed in AppWorkspaceWS")
+var ErrPositiveValueOnly = errors.New("positive value only allowed")
+
+func ErrInvalidLocalPackageName(name string) error {
+	return fmt.Errorf("invalid local package name %s", name)
+}
+
+func ErrLocalPackageNameConflict(name string) error {
+	return fmt.Errorf("conflict: local package name %s equal to current package name", name)
+}
+
+func ErrLocalPackageNameAlreadyUsed(name string, usedFor string) error {
+	return fmt.Errorf("local package name %s already used for %s", name, usedFor)
+}
 
 func ErrLocalPackageNameRedeclared(localPkgName, newLocalPkgName string) error {
 	return fmt.Errorf("local package name %s was redeclared as %s", localPkgName, newLocalPkgName)
@@ -65,6 +79,10 @@ func ErrUndefinedQuery(name DefQName) error {
 
 func ErrUndefinedJob(name DefQName) error {
 	return fmt.Errorf("undefined job: %s", name)
+}
+
+func ErrUndefinedProjector(name DefQName) error {
+	return fmt.Errorf("undefined projector: %s", name)
 }
 
 func ErrUndefinedRate(name DefQName) error {
@@ -148,8 +166,8 @@ func ErrAbstractTableNotAlowedInProjectors(tblName string) error {
 	return fmt.Errorf("projector refers to abstract table %s", tblName)
 }
 
-func ErrProjectorDoesNotDeclareViewIntent(projectorName, viewName string) error {
-	return fmt.Errorf("projector %s does not declare intent for view %s", projectorName, viewName)
+func ErrStatementDoesNotDeclareViewIntent(projectorName, viewName string) error {
+	return fmt.Errorf("%s does not declare intent for view %s", projectorName, viewName)
 }
 
 func ErrUndefined(name string) error {
@@ -206,6 +224,10 @@ func ErrVarcharFieldInCC(name string) error {
 
 func ErrBytesFieldInCC(name string) error {
 	return fmt.Errorf("bytes field %s can only be the last one in clustering key", name)
+}
+
+func ErrLimitOperationNotAllowed(name string) error {
+	return fmt.Errorf("operation %s not allowed", name)
 }
 
 func errorAt(err error, pos *lexer.Position) error {

@@ -16,7 +16,8 @@ type IWithComments interface {
 	CommentLines() []string
 }
 
-type ICommentsBuilder interface {
+// ICommenter is interface to set comment for an entity (type, field, etc.).
+type ICommenter interface {
 	// Sets comment as string with lines, concatenated with LF
 	SetComment(...string)
 }

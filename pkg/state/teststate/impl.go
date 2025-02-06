@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/voedger/voedger/pkg/appdef"
+	"github.com/voedger/voedger/pkg/appdef/builder"
 	wsdescutil "github.com/voedger/voedger/pkg/coreutils/testwsdesc"
 	"github.com/voedger/voedger/pkg/iauthnz"
 	"github.com/voedger/voedger/pkg/iratesce"
@@ -213,7 +214,7 @@ func (ts *testState) emulateUniquesHandler(entity appdef.QName, wsid istructs.WS
 	return ts.uniquesHandler(entity, wsid, data)
 }
 
-func (ts *testState) emulateFederationCmd(owner, appname string, wsid istructs.WSID, command appdef.QName, body string) (statusCode int, newIDs map[string]int64, result string, err error) {
+func (ts *testState) emulateFederationCmd(owner, appname string, wsid istructs.WSID, command appdef.QName, body string) (statusCode int, newIDs map[string]istructs.RecordID, result string, err error) {
 	if ts.federationCmdHandler == nil {
 		panic("federation command handler not set")
 	}
@@ -346,7 +347,7 @@ func (ts *testState) buildAppDef(packagePath string, packageDir string, createWo
 		}
 		packagesAST = append(packagesAST, dummyAppPkgAST)
 	} else {
-		PackageName = parser.GetPackageName(packagePath)
+		PackageName = parser.ExtractLocalPackageName(packagePath)
 	}
 
 	appSchema, err := parser.BuildAppSchema(packagesAST)
@@ -359,7 +360,7 @@ func (ts *testState) buildAppDef(packagePath string, packageDir string, createWo
 
 	appName := istructs.AppQName_test1_app1
 
-	adb := appdef.New()
+	adb := builder.New()
 	err = parser.BuildAppDefs(appSchema, adb)
 	if err != nil {
 		panic(err)
@@ -375,7 +376,7 @@ func (ts *testState) buildAppDef(packagePath string, packageDir string, createWo
 	cfgs := make(istructsmem.AppConfigsType, 1)
 	cfg := cfgs.AddBuiltInAppConfig(appName, adb)
 	cfg.SetNumAppWorkspaces(istructs.DefaultNumAppWorkspaces)
-	for ext := range appdef.Extensions(ts.appDef.Types) {
+	for ext := range appdef.Extensions(ts.appDef.Types()) {
 		if ext.QName().Pkg() == PackageName {
 			if proj, ok := ext.(appdef.IProjector); ok {
 				if proj.Sync() {
@@ -391,7 +392,7 @@ func (ts *testState) buildAppDef(packagePath string, packageDir string, createWo
 		}
 	}
 
-	asf := mem.Provide()
+	asf := mem.Provide(coreutils.MockTime)
 	storageProvider := istorageimpl.Provide(asf)
 	prov := istructsmem.Provide(
 		cfgs,

@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/voedger/voedger/pkg/appdef"
+	"github.com/voedger/voedger/pkg/appdef/builder"
+	"github.com/voedger/voedger/pkg/appdef/constraints"
+	"github.com/voedger/voedger/pkg/appdef/filter"
 	"github.com/voedger/voedger/pkg/istructs"
 	"github.com/voedger/voedger/pkg/istructsmem/internal/descr"
 )
@@ -20,11 +23,16 @@ func Example() {
 	appName := istructs.AppQName_test1_app1
 
 	appDef := func() appdef.IAppDef {
-		adb := appdef.New()
+		adb := builder.New()
 		adb.AddPackage("test", "test/path")
 
 		wsName, wsDescName := appdef.NewQName("test", "ws"), appdef.NewQName("test", "wsDesc")
 		wsb := adb.AddWorkspace(wsName)
+
+		tags := appdef.MustParseQNames("test.dataTag", "test.engineTag", "test.structTag")
+		for _, tag := range tags {
+			wsb.AddTag(tag)
+		}
 
 		numName := appdef.NewQName("test", "number")
 		strName := appdef.NewQName("test", "string")
@@ -34,72 +42,96 @@ func Example() {
 
 		docName, recName := appdef.NewQName("test", "doc"), appdef.NewQName("test", "rec")
 
-		n := wsb.AddData(numName, appdef.DataKind_int64, appdef.NullQName, appdef.MinIncl(1))
+		n := wsb.AddData(numName, appdef.DataKind_int64, appdef.NullQName, constraints.MinIncl(1))
 		n.SetComment("natural (positive) integer")
+		n.SetTag(tags[0])
 
 		s := wsb.AddData(strName, appdef.DataKind_string, appdef.NullQName)
-		s.AddConstraints(appdef.MinLen(1), appdef.MaxLen(100), appdef.Pattern(`^\w+$`, "only word characters allowed"))
+		s.AddConstraints(constraints.MinLen(1), constraints.MaxLen(100), constraints.Pattern(`^\w+$`, "only word characters allowed"))
+		s.SetTag(tags[0])
 
 		doc := wsb.AddCDoc(docName)
 		doc.SetSingleton()
 		doc.
 			AddField("f1", appdef.DataKind_int64, true).
 			SetFieldComment("f1", "field comment").
-			AddField("f2", appdef.DataKind_string, false, appdef.MinLen(4), appdef.MaxLen(4), appdef.Pattern(`^\w+$`)).
+			AddField("f2", appdef.DataKind_string, false, constraints.MinLen(4), constraints.MaxLen(4), constraints.Pattern(`^\w+$`)).
 			AddDataField("numField", numName, false).
 			AddRefField("mainChild", false, recName)
 		doc.AddContainer("rec", recName, 0, 100, "container comment")
 		doc.AddUnique(appdef.UniqueQName(docName, "unique1"), []appdef.FieldName{"f1", "f2"})
 		doc.SetComment(`comment 1`, `comment 2`)
+		doc.SetTag(tags[2])
 
 		rec := wsb.AddCRecord(recName)
 		rec.
 			AddField("f1", appdef.DataKind_int64, true).
 			AddField("f2", appdef.DataKind_string, false).
-			AddField("phone", appdef.DataKind_string, true, appdef.MinLen(1), appdef.MaxLen(25)).
+			AddField("phone", appdef.DataKind_string, true, constraints.MinLen(1), constraints.MaxLen(25)).
 			SetFieldVerify("phone", appdef.VerificationKind_Any...)
 		rec.
 			SetUniqueField("phone").
 			AddUnique(appdef.UniqueQName(recName, "uniq1"), []appdef.FieldName{"f1"})
+		rec.SetTag(tags[2])
 
 		viewName := appdef.NewQName("test", "view")
 		view := wsb.AddView(viewName)
 		view.Key().PartKey().
 			AddField("pk_1", appdef.DataKind_int64)
 		view.Key().ClustCols().
-			AddField("cc_1", appdef.DataKind_string, appdef.MaxLen(100))
+			AddField("cc_1", appdef.DataKind_string, constraints.MaxLen(100))
 		view.Value().
 			AddDataField("vv_code", strName, true).
 			AddRefField("vv_1", true, docName)
+		view.SetTag(tags[2])
 
 		objName := appdef.NewQName("test", "obj")
 		obj := wsb.AddObject(objName)
 		obj.AddField("f1", appdef.DataKind_string, true)
+		obj.SetTag(tags[2])
 
 		cmdName := appdef.NewQName("test", "cmd")
 		wsb.AddCommand(cmdName).
 			SetUnloggedParam(objName).
 			SetParam(objName).
-			SetEngine(appdef.ExtensionEngineKind_WASM)
+			SetEngine(appdef.ExtensionEngineKind_WASM).
+			SetTag(tags[1])
 
 		queryName := appdef.NewQName("test", "query")
 		wsb.AddQuery(queryName).
 			SetParam(objName).
-			SetResult(appdef.QNameANY)
+			SetResult(appdef.QNameANY).
+			SetTag(tags[1])
 
-		prjName := appdef.NewQName("test", "projector")
-		prj := wsb.AddProjector(prjName)
-		prj.
+		prjRec := wsb.AddProjector(appdef.NewQName("test", "recProjector"))
+		prjRec.Events().Add(
+			[]appdef.OperationKind{appdef.OperationKind_Insert, appdef.OperationKind_Update, appdef.OperationKind_Activate, appdef.OperationKind_Deactivate},
+			filter.QNames(recName),
+			"run projector every time when «test.rec» is changed")
+		prjRec.
 			SetWantErrors().
 			SetEngine(appdef.ExtensionEngineKind_WASM)
-		prj.Events().
-			Add(recName, appdef.ProjectorEventKind_AnyChanges...).SetComment(recName, "run projector every time when «test.rec» is changed").
-			Add(cmdName).SetComment(cmdName, "run projector every time when «test.cmd» command is executed").
-			Add(objName).SetComment(objName, "run projector every time when any command with «test.obj» argument is executed")
-		prj.States().
+		prjRec.States().
 			Add(sysRecords, docName, recName).SetComment(sysRecords, "needs to read «test.doc» and «test.rec» from «sys.records» storage")
-		prj.Intents().
+		prjRec.Intents().
 			Add(sysViews, viewName).SetComment(sysViews, "needs to update «test.view» from «sys.views» storage")
+		prjRec.SetTag(tags[1])
+
+		prjCmd := wsb.AddProjector(appdef.NewQName("test", "cmdProjector"))
+		prjCmd.Events().Add(
+			[]appdef.OperationKind{appdef.OperationKind_Execute},
+			filter.QNames(cmdName),
+			"run projector every time when «test.cmd» command is executed")
+		prjCmd.SetEngine(appdef.ExtensionEngineKind_WASM)
+		prjCmd.SetTag(tags[1])
+
+		prjObj := wsb.AddProjector(appdef.NewQName("test", "objProjector"))
+		prjObj.Events().Add(
+			[]appdef.OperationKind{appdef.OperationKind_ExecuteWithParam},
+			filter.QNames(objName),
+			"run projector every time when any command with «test.obj» argument is executed")
+		prjObj.SetEngine(appdef.ExtensionEngineKind_WASM)
+		prjObj.SetTag(tags[1])
 
 		jobName := appdef.NewQName("test", "job")
 		job := wsb.AddJob(jobName)
@@ -107,36 +139,40 @@ func Example() {
 		job.SetEngine(appdef.ExtensionEngineKind_WASM)
 		job.States().
 			Add(sysViews, viewName).SetComment(sysViews, "needs to read «test.view» from «sys.views» storage")
+		job.SetTag(tags[1])
 
 		readerName := appdef.NewQName("test", "reader")
 		reader := wsb.AddRole(readerName)
 		reader.SetComment("read-only role")
-		reader.Grant(
+		wsb.Grant(
 			[]appdef.OperationKind{appdef.OperationKind_Select},
-			[]appdef.QName{docName, recName}, []appdef.FieldName{"f1", "f2"},
+			filter.QNames(docName, recName), []appdef.FieldName{"f1", "f2"},
+			readerName,
 			"allow reader to select some fields from test.doc and test.rec")
-		reader.Grant(
+		wsb.Grant(
 			[]appdef.OperationKind{appdef.OperationKind_Select},
-			[]appdef.QName{viewName}, nil,
+			filter.QNames(viewName), nil,
+			readerName,
 			"allow reader to select all fields from test.view")
-		reader.GrantAll([]appdef.QName{queryName}, "allow reader to execute test.query")
+		wsb.GrantAll(filter.QNames(queryName), readerName, "allow reader to execute test.query")
 
 		writerName := appdef.NewQName("test", "writer")
 		writer := wsb.AddRole(writerName)
 		writer.SetComment("read-write role")
-		writer.GrantAll([]appdef.QName{docName, recName, viewName}, "allow writer to do anything with test.doc, test.rec and test.view")
-		writer.Revoke(
+		wsb.GrantAll(filter.QNames(docName, recName, viewName), writerName, "allow writer to do anything with test.doc, test.rec and test.view")
+		wsb.Revoke(
 			[]appdef.OperationKind{appdef.OperationKind_Update},
-			[]appdef.QName{docName},
+			filter.QNames(docName),
 			nil,
+			writerName,
 			"disable writer to update test.doc")
-		writer.GrantAll([]appdef.QName{cmdName, queryName}, "allow writer to execute all test functions")
+		wsb.GrantAll(filter.AllWSFunctions(wsName), writerName, "allow writer to execute all test functions")
 
 		rateName := appdef.NewQName("test", "rate")
 		wsb.AddRate(rateName, 10, time.Minute, []appdef.RateScope{appdef.RateScope_AppPartition}, "rate 10 times per second per partition")
 
 		limitName := appdef.NewQName("test", "limit")
-		wsb.AddLimit(limitName, []appdef.QName{appdef.QNameAnyCommand}, rateName, "limit all commands execution by test.rate")
+		wsb.AddLimit(limitName, []appdef.OperationKind{appdef.OperationKind_Execute}, appdef.LimitFilterOption_ALL, filter.WSTypes(wsName, appdef.TypeKind_Command), rateName, "limit all commands execution by test.rate")
 
 		wsb.AddCDoc(wsDescName).SetSingleton()
 		wsb.SetDescriptor(wsDescName)
@@ -168,15 +204,26 @@ func Example() {
 	//       "Workspaces": {
 	//         "test.ws": {
 	//           "Descriptor": "test.wsDesc",
+	//           "Tags": {
+	//             "test.dataTag": {},
+	//             "test.engineTag": {},
+	//             "test.structTag": {}
+	//           },
 	//           "DataTypes": {
 	//             "test.number": {
 	//               "Comment": "natural (positive) integer",
+	//               "Tags": [
+	//                 "test.dataTag"
+	//               ],
 	//               "Ancestor": "sys.int64",
 	//               "Constraints": {
 	//                 "MinIncl": 1
 	//               }
 	//             },
 	//             "test.string": {
+	//               "Tags": [
+	//                 "test.dataTag"
+	//               ],
 	//               "Ancestor": "sys.string",
 	//               "Constraints": {
 	//                 "MaxLen": 100,
@@ -188,6 +235,9 @@ func Example() {
 	//           "Structures": {
 	//             "test.doc": {
 	//               "Comment": "comment 1\ncomment 2",
+	//               "Tags": [
+	//                 "test.structTag"
+	//               ],
 	//               "Kind": "CDoc",
 	//               "Fields": [
 	//                 {
@@ -253,6 +303,9 @@ func Example() {
 	//               "Singleton": true
 	//             },
 	//             "test.obj": {
+	//               "Tags": [
+	//                 "test.structTag"
+	//               ],
 	//               "Kind": "Object",
 	//               "Fields": [
 	//                 {
@@ -272,6 +325,9 @@ func Example() {
 	//               ]
 	//             },
 	//             "test.rec": {
+	//               "Tags": [
+	//                 "test.structTag"
+	//               ],
 	//               "Kind": "CRecord",
 	//               "Fields": [
 	//                 {
@@ -352,6 +408,9 @@ func Example() {
 	//           },
 	//           "Views": {
 	//             "test.view": {
+	//               "Tags": [
+	//                 "test.structTag"
+	//               ],
 	//               "Key": {
 	//                 "Partition": [
 	//                   {
@@ -397,6 +456,9 @@ func Example() {
 	//           "Extensions": {
 	//             "Commands": {
 	//               "test.cmd": {
+	//                 "Tags": [
+	//                   "test.engineTag"
+	//                 ],
 	//                 "Name": "cmd",
 	//                 "Engine": "WASM",
 	//                 "Arg": "test.obj",
@@ -405,6 +467,9 @@ func Example() {
 	//             },
 	//             "Queries": {
 	//               "test.query": {
+	//                 "Tags": [
+	//                   "test.engineTag"
+	//                 ],
 	//                 "Name": "query",
 	//                 "Engine": "BuiltIn",
 	//                 "Arg": "test.obj",
@@ -412,8 +477,51 @@ func Example() {
 	//               }
 	//             },
 	//             "Projectors": {
-	//               "test.projector": {
-	//                 "Name": "projector",
+	//               "test.cmdProjector": {
+	//                 "Tags": [
+	//                   "test.engineTag"
+	//                 ],
+	//                 "Name": "cmdProjector",
+	//                 "Engine": "WASM",
+	//                 "Events": [
+	//                   {
+	//                     "Ops": [
+	//                       "Execute"
+	//                     ],
+	//                     "Filter": {
+	//                       "QNames": [
+	//                         "test.cmd"
+	//                       ]
+	//                     },
+	//                     "Comment": "run projector every time when «test.cmd» command is executed"
+	//                   }
+	//                 ]
+	//               },
+	//               "test.objProjector": {
+	//                 "Tags": [
+	//                   "test.engineTag"
+	//                 ],
+	//                 "Name": "objProjector",
+	//                 "Engine": "WASM",
+	//                 "Events": [
+	//                   {
+	//                     "Ops": [
+	//                       "ExecuteWithParam"
+	//                     ],
+	//                     "Filter": {
+	//                       "QNames": [
+	//                         "test.obj"
+	//                       ]
+	//                     },
+	//                     "Comment": "run projector every time when any command with «test.obj» argument is executed"
+	//                   }
+	//                 ]
+	//               },
+	//               "test.recProjector": {
+	//                 "Tags": [
+	//                   "test.engineTag"
+	//                 ],
+	//                 "Name": "recProjector",
 	//                 "Engine": "WASM",
 	//                 "States": {
 	//                   "sys.records": [
@@ -426,34 +534,30 @@ func Example() {
 	//                     "test.view"
 	//                   ]
 	//                 },
-	//                 "Events": {
-	//                   "test.cmd": {
-	//                     "Comment": "run projector every time when «test.cmd» command is executed",
-	//                     "Kind": [
-	//                       "Execute"
-	//                     ]
-	//                   },
-	//                   "test.obj": {
-	//                     "Comment": "run projector every time when any command with «test.obj» argument is executed",
-	//                     "Kind": [
-	//                       "ExecuteWithParam"
-	//                     ]
-	//                   },
-	//                   "test.rec": {
-	//                     "Comment": "run projector every time when «test.rec» is changed",
-	//                     "Kind": [
+	//                 "Events": [
+	//                   {
+	//                     "Ops": [
 	//                       "Insert",
 	//                       "Update",
 	//                       "Activate",
 	//                       "Deactivate"
-	//                     ]
+	//                     ],
+	//                     "Filter": {
+	//                       "QNames": [
+	//                         "test.rec"
+	//                       ]
+	//                     },
+	//                     "Comment": "run projector every time when «test.rec» is changed"
 	//                   }
-	//                 },
+	//                 ],
 	//                 "WantErrors": true
 	//               }
 	//             },
 	//             "Jobs": {
 	//               "test.job": {
+	//                 "Tags": [
+	//                   "test.engineTag"
+	//                 ],
 	//                 "Name": "job",
 	//                 "Engine": "WASM",
 	//                 "States": {
@@ -467,96 +571,10 @@ func Example() {
 	//           },
 	//           "Roles": {
 	//             "test.reader": {
-	//               "Comment": "read-only role",
-	//               "ACL": [
-	//                 {
-	//                   "Comment": "allow reader to select some fields from test.doc and test.rec",
-	//                   "Policy": "Allow",
-	//                   "Ops": [
-	//                     "Select"
-	//                   ],
-	//                   "Resources": {
-	//                     "On": [
-	//                       "test.doc",
-	//                       "test.rec"
-	//                     ],
-	//                     "Fields": [
-	//                       "f1",
-	//                       "f2"
-	//                     ]
-	//                   }
-	//                 },
-	//                 {
-	//                   "Comment": "allow reader to select all fields from test.view",
-	//                   "Policy": "Allow",
-	//                   "Ops": [
-	//                     "Select"
-	//                   ],
-	//                   "Resources": {
-	//                     "On": [
-	//                       "test.view"
-	//                     ]
-	//                   }
-	//                 },
-	//                 {
-	//                   "Comment": "allow reader to execute test.query",
-	//                   "Policy": "Allow",
-	//                   "Ops": [
-	//                     "Execute"
-	//                   ],
-	//                   "Resources": {
-	//                     "On": [
-	//                       "test.query"
-	//                     ]
-	//                   }
-	//                 }
-	//               ]
+	//               "Comment": "read-only role"
 	//             },
 	//             "test.writer": {
-	//               "Comment": "read-write role",
-	//               "ACL": [
-	//                 {
-	//                   "Comment": "allow writer to do anything with test.doc, test.rec and test.view",
-	//                   "Policy": "Allow",
-	//                   "Ops": [
-	//                     "Insert",
-	//                     "Update",
-	//                     "Select"
-	//                   ],
-	//                   "Resources": {
-	//                     "On": [
-	//                       "test.doc",
-	//                       "test.rec",
-	//                       "test.view"
-	//                     ]
-	//                   }
-	//                 },
-	//                 {
-	//                   "Comment": "disable writer to update test.doc",
-	//                   "Policy": "Deny",
-	//                   "Ops": [
-	//                     "Update"
-	//                   ],
-	//                   "Resources": {
-	//                     "On": [
-	//                       "test.doc"
-	//                     ]
-	//                   }
-	//                 },
-	//                 {
-	//                   "Comment": "allow writer to execute all test functions",
-	//                   "Policy": "Allow",
-	//                   "Ops": [
-	//                     "Execute"
-	//                   ],
-	//                   "Resources": {
-	//                     "On": [
-	//                       "test.cmd",
-	//                       "test.query"
-	//                     ]
-	//                   }
-	//                 }
-	//               ]
+	//               "Comment": "read-write role"
 	//             }
 	//           },
 	//           "ACL": [
@@ -566,8 +584,8 @@ func Example() {
 	//               "Ops": [
 	//                 "Select"
 	//               ],
-	//               "Resources": {
-	//                 "On": [
+	//               "Filter": {
+	//                 "QNames": [
 	//                   "test.doc",
 	//                   "test.rec"
 	//                 ],
@@ -584,8 +602,8 @@ func Example() {
 	//               "Ops": [
 	//                 "Select"
 	//               ],
-	//               "Resources": {
-	//                 "On": [
+	//               "Filter": {
+	//                 "QNames": [
 	//                   "test.view"
 	//                 ]
 	//               },
@@ -597,8 +615,8 @@ func Example() {
 	//               "Ops": [
 	//                 "Execute"
 	//               ],
-	//               "Resources": {
-	//                 "On": [
+	//               "Filter": {
+	//                 "QNames": [
 	//                   "test.query"
 	//                 ]
 	//               },
@@ -610,10 +628,12 @@ func Example() {
 	//               "Ops": [
 	//                 "Insert",
 	//                 "Update",
+	//                 "Activate",
+	//                 "Deactivate",
 	//                 "Select"
 	//               ],
-	//               "Resources": {
-	//                 "On": [
+	//               "Filter": {
+	//                 "QNames": [
 	//                   "test.doc",
 	//                   "test.rec",
 	//                   "test.view"
@@ -627,8 +647,8 @@ func Example() {
 	//               "Ops": [
 	//                 "Update"
 	//               ],
-	//               "Resources": {
-	//                 "On": [
+	//               "Filter": {
+	//                 "QNames": [
 	//                   "test.doc"
 	//                 ]
 	//               },
@@ -640,11 +660,12 @@ func Example() {
 	//               "Ops": [
 	//                 "Execute"
 	//               ],
-	//               "Resources": {
-	//                 "On": [
-	//                   "test.cmd",
-	//                   "test.query"
-	//                 ]
+	//               "Filter": {
+	//                 "Types": [
+	//                   "TypeKind_Query",
+	//                   "TypeKind_Command"
+	//                 ],
+	//                 "Workspace": "test.ws"
 	//               },
 	//               "Principal": "test.writer"
 	//             }
@@ -662,9 +683,16 @@ func Example() {
 	//           "Limits": {
 	//             "test.limit": {
 	//               "Comment": "limit all commands execution by test.rate",
-	//               "On": [
-	//                 "sys.AnyCommand"
+	//               "Ops": [
+	//                 "Execute"
 	//               ],
+	//               "Filter": {
+	//                 "Option": "ALL",
+	//                 "Types": [
+	//                   "TypeKind_Command"
+	//                 ],
+	//                 "Workspace": "test.ws"
+	//               },
 	//               "Rate": "test.rate"
 	//             }
 	//           }

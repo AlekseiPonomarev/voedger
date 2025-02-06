@@ -8,29 +8,18 @@
 
 ```mermaid
 classDiagram
-    class IAppDef {
-        <<interface>>
-        +Type(QName) IType
-        +Data(QName) IData
-        +GDoc(QName) IGDoc
-        +CDoc(QName) ICDoc
-        +WDoc(QName) IWDoc
-        +ODoc(QName) IODoc
-        +View(QName) IView
-        +Command(QName) ICommand
-        +Query(QName) IQuery
-        +Role(QName) IRole
-        +Projector(QName) IProjector
-        +Job(QName) IJob
-        +Workspace(QName) IWorkspace
-    }
-    IAppDef "1" *--> "0..*" IType : compose
-
     class IType {
         <<interface>>
         +QName() QName
         +Kind()* TypeKind
-        +Comment() []string
+        +Comment() string
+        +Tags() []ITag
+    }
+
+    ITag --|> IType : inherits
+    class ITag {
+        <<interface>>
+        +Kind()* TypeKind_Tag
     }
 
     IData --|> IType : inherits
@@ -38,7 +27,7 @@ classDiagram
         <<interface>>
         +Kind()* TypeKind_Data
         +Ancestor() IData
-        +Constraints() []IConstraint
+        +Constraints() iter.Seq2[ConstraintKind, IConstraint]
     }
 
     IArray --|> IType : inherits
@@ -52,10 +41,10 @@ classDiagram
     IType <|-- IStructure : inherits
     class IStructure {
         <<interface>>
+        IWithFields
+        IWithContainers
+        IWithUniques
         +Abstract() bool
-        +Fields() []IField
-        +Containers() []IContainer
-        +Uniques() []IUnique
         +SystemField_QName() IField
     }
 
@@ -190,21 +179,86 @@ classDiagram
         +CronSchedule() string
     }
 
-    IWorkspace --|> IType : inherits
-    class IWorkspace {
-        <<interface>>
-        +Kind()* TypeKind_Workspace
-        +Abstract() bool
-        +Descriptor() QName
-        +Types() []IType
-    }
-
     IRole --|> IType : inherits
     class IRole {
         <<interface>>
         +Kind()* TypeKind_Role
-        +ACL() []IACLRule
     }
+
+    IRate --|> IType : inherits
+    class IRole {
+        <<interface>>
+        +Kind()* TypeKind_Rate
+    }
+
+    ILimit --|> IType : inherits
+    class IRole {
+        <<interface>>
+        +Kind()* TypeKind_Limit
+    }
+
+    IWorkspace --|> IType : inherits
+    class IWorkspace {
+        <<interface>>
+        +Kind()* TypeKind_Workspace
+        +Types()[]IType
+        ...
+    }
+```
+
+### Types iterators
+
+```mermaid
+classDiagram
+
+  class IAppDef {
+    <<interface>>
+    +Types() []IType
+    +Workspaces() []IWorkspace
+    ...
+  }
+  IAppDef "1" *--> "1" iterator : Types
+
+  class IWorkspace {
+    <<interface>>
+    +LocalTypes()[]IType
+    +Types()[]IType
+    …
+  }
+  IWorkspace "1" *--> "2" iterator : LocalTypes and Types
+
+  class iterator {
+    <<func([]IType)iter.Seq[T]>>
+    
+    +CDocs([]IType) iter.Seq[ICDoc]
+    +Commands([]IType) iter.Seq[ICommand]
+    +CRecords([]IType) iter.Seq[ICRecord]
+    +DataTypes([]IType) iter.Seq[IData]
+    +Extensions([]IType) iter.Seq[IExtension]
+    +Functions([]IType) iter.Seq[IFunction]
+    +GDocs([]IType) iter.Seq[IGDoc]
+    +GRecords([]IType) iter.Seq[IGRecord]
+    +Jobs([]IType) iter.Seq[IJob]
+    +Limits([]IType) iter.Seq[ILimit]
+    +Objects([]IType) iter.Seq[IObject]
+    +ODocs([]IType) iter.Seq[IODoc]
+    +ORecords([]IType) iter.Seq[IORecord]
+    +Projectors([]IType) iter.Seq[IProjector]
+    +Queries([]IType) iter.Seq[IQuery]
+    +Rates([]IType) iter.Seq[IRate]
+    +Records([]IType) iter.Seq[IRecord]
+    +Roles([]IType) iter.Seq[IRole]
+    +Singletons([]IType) iter.Seq[ISingleton]
+    +Structures([]IType) iter.Seq[IStructure]
+    +Tags([]IType) iter.Seq[ITag]
+    +Views([]IType) iter.Seq[IView]
+    +WDocs([]IType) iter.Seq[IWDoc]
+    +WRecords([]IType) iter.Seq[IWRecord]
+
+    +TypesByKind([]IType,TypeKind) []T
+    +TypesByKinds([]IType,TypeKinds) iter.Seq[T]
+  }
+
 ```
 
 ### Data types
@@ -213,19 +267,12 @@ classDiagram
 classDiagram
     direction BT
 
-  class IAppDef {
-    <<Interface>>
-    +DataTypes(inclSys bool) []IData
-    +SysData(DataKind) IData
-  }
-
-  IData "0..*" <--o "1" IAppDef : DataTypes
-  IData "1..DataKind_count" <--o "1" IAppDef : SysData
-
     class IType {
         <<interface>>
+        +Comment() string
         +Name() QName
         +Kind() TypeKind
+        ...
     }
 
     IData --|> IType : inherits
@@ -276,8 +323,8 @@ classDiagram
         +Kind() ConstraintKind
         +Value() any
     }
-    note for IConstraint " - minLen() uint
-                           - maxLen() uint
+    note for IConstraint " - MinLen() uint
+                           - MaxLen() uint
                            - Pattern() RegExp
                            - MinInclusive() float
                            - MinExclusive() float
@@ -297,13 +344,13 @@ The inheritance and composing diagrams given below are expanded general diagrams
 ```mermaid
 classDiagram
     direction BT
-%%    namespace _ {
+    namespace _ {
         class IStructure {
             <<interface>>
+            IWithFields
+            IWithContainers
+            IWithUniques
             +Abstract() bool
-            +Fields() []IField
-            +Containers() []IContainer
-            +Uniques() []IUnique
             +SystemField_QName() IField
         }
 
@@ -312,7 +359,7 @@ classDiagram
             +SystemField_ID() IField
             +SystemField_IsActive() IField
         }
-%%    }
+    }
 
     IRecord --|> IStructure : inherits
 
@@ -389,34 +436,6 @@ classDiagram
 classDiagram
   direction TB
 
-  class IAppDef {
-    <<Interface>>
-    +Structures() []IStructure
-    +Records() []IRecord
-    +Singletons() []ISingleton
-    +GDocs()[]IGDoc
-    +GRecords()[]IGRecord
-    +CDocs()[]ICDoc
-    +CRecords()[]ICRecord
-    +WDocs()[]IWDoc
-    +WRecords()[]IWRecord
-    +ODocs()[]IODoc
-    +ORecords()[]IORecord
-    +Objects()[]IObject
-  }
-  IAppDef "1" o--> "0..*" IStructure : Structures
-  IAppDef "1" o--> "0..*" IRecord : Records
-  IAppDef "1" o--> "0..*" ISingleton : Singletons
-  IAppDef "1" o--> "0..*" IGDoc : GDocs
-  IAppDef "1" o--> "0..*" IGRecord : GRecords
-  IAppDef "1" o--> "0..*" ICDoc : CDocs
-  IAppDef "1" o--> "0..*" ICRecord : CRecords
-  IAppDef "1" o--> "0..*" IWDoc : WDocs
-  IAppDef "1" o--> "0..*" IWRecord : WRecords
-  IAppDef "1" o--> "0..*" IODoc : ODocs
-  IAppDef "1" o--> "0..*" IORecord : ORecords
-  IAppDef "1" o--> "0..*" IObject : Objects
-
   IGDoc "1" o--> "0..*" IGRecord : children
   IGRecord "1" o--> "0..*" IGRecord : children
 
@@ -440,31 +459,22 @@ classDiagram
 
   class IField {
     <<Interface>>
+    +Comment() string
     +Name() FieldName
     +DataKind() DataKind
     +Required() bool
     +Verified() bool
-    +VerificationKind() []VerificationKind
-    +Constraints() []IConstraint
+    +VerificationKind() []VerificationKind]
+    +Constraints() iter.Seq2[ConstraintKind, IConstraint]
   }
 
-  class IFields{
+  class IWithFields{
     <<Interface>>
     Field(FieldName) IField
     FieldCount() int
     Fields() []IField
   }
-  IFields "1" --* "0..*" IField : compose
-
-  IFieldsBuilder --|> IFields : inherits
-  class IFieldsBuilder {
-    <<Interface>>
-    AddField(…)
-    AddVerifiedField(…)
-    AddRefField(…)
-    AddStringField(…)
-    AddConstraints(IConstraint...)
-  }
+  IWithFields "1" --* "0..*" IField : compose
 
   IRefField --|> IField : inherits
   class IRefField {
@@ -475,45 +485,32 @@ classDiagram
   class IContainer {
     <<Interface>>
     +Name() string
-    +Def() IDef
+    +Type() IType
     +MinOccurs() int
     +MaxOccurs() int
   }
 
-  class IContainers{
+  class IWithContainers{
     <<Interface>>
     Container(string) IContainer
     ContainerCount() int
-    ContainerDef() [string]IType
     Containers() []IContainer
   }
-  IContainers "1" --* "0..*" IContainer : compose
-
-  IContainersBuilder --|> IContainers : inherits
-  class IContainersBuilder {
-    <<Interface>>
-    AddContainer(…) IContainer
-  }
+  IWithContainers "1" --* "0..*" IContainer : compose
 
   class IUnique {
     <<Interface>>
     +Name() QName
-    +Fields() []IFeld
+    +Fields() []IField
   }
 
-  class IUniques{
+  class IWithUniques{
     <<Interface>>
     UniqueByName(QName) IUnique
     UniqueCount() int
-    Uniques() []IUnique
+    Uniques() map[QName] IUnique
   }
-  IUniques "1" --* "0..*" IUnique : compose
-
-  IUniquesBuilder --|> IUniques : inherits
-  class IUniquesBuilder {
-    <<Interface>>
-    AddUnique(…) IUnique
-  }
+  IWithUniques "1" --* "0..*" IUnique : compose
 ```
 
 ### Views
@@ -524,13 +521,14 @@ classDiagram
     <<Interface>>
     +Kind()* TypeKind
     +QName() QName
+    ...
   }
 
   IType <|-- IView : inherits
   class IView {
     <<Interface>>
     +Kind()* TypeKind_View
-    IFields
+    IWithFields
     +Key() IViewKey
     +Value() IViewValue
   }
@@ -539,43 +537,27 @@ classDiagram
 
   class IViewKey {
     <<Interface>>
-    IFields
+    IWithFields
     +PartKey() IViewPartKey
     +ClustCols() IViewClustCols
   }
-  IViewKey "1" *--> "1..*" IField : fields
   IViewKey "1" *--> "1" IViewPartKey : PartKey
   IViewKey "1" *--> "1" IViewClustCols : ClustCols
 
   class IViewPartKey {
     <<Interface>>
-    IFields
+    IWithFields
   }
-  IViewPartKey "1" *--> "1..*" IField : fields
 
   class IViewClustCols {
     <<Interface>>
-    IFields
+    IWithFields
   }
-  IViewClustCols "1" *--> "1..*" IField : fields
 
   class IViewValue {
     <<Interface>>
-    IFields
+    IWithFields
   }
-  IViewValue "1" *--> "1..*" IField : fields
-
-  class IField {
-    <<interface>>
-    …
-  }
-
-    class IAppDef {
-      …
-      +Views() []IView
-    }
-
-    IAppDef "1" *--> "0..*" IView : Views
 ```
 
 ### Extensions
@@ -602,15 +584,13 @@ classDiagram
     IExtension "1" *--> "1" IStorages : Intents
     class IStorages {
         <<interface>>
-        +Enum(func(IStorage))
-        +Len() int
-        +Map() map[QName] []QName
+        +Names()[]QName
         +Storage(QName) IStorage
     }
     IStorages "1" *--> "0..*" IStorage : Storages
     class IStorage {
         <<interface>>
-        +Comment() : []string
+        +Comment() : string
         +Name(): QName
         +QNames() []QName
     }
@@ -640,24 +620,20 @@ classDiagram
         <<interface>>
         +Kind()* TypeKind_Projector
         +WantErrors() bool
-        +Events() IProjectorEvents
+        +Events()[]IProjectorEvent
     }
 
-    IProjector "1" *--> "1" IProjectorEvents : Events
-    IProjectorEvents "1" *--> "1..*" IProjectorEvent : Event
-    class IProjectorEvents {
-        <<interface>>
-        +Enum(func(IProjectorEvent))
-        +Event(QName) IProjectorEvent
-        +Len() int
-        +Map() map[QName] []ProjectorEventKind
-    }
+    IProjector "1" *--> "1..*" IProjectorEvent : events
     class IProjectorEvent {
         <<interface>>
-        +Comment() []string
-        +On() IType
-        +Kind() []ProjectorEventKind
+        +Comment() string
+        +Ops() []OperationKind]
+        +Filter() IFilter
     }
+
+    IProjectorEvent "1" *--> "1" IFilter : filter
+
+    note for IFilter "see filter/readme.md"
 
     IProjectorEvent "1" ..> "1..*" ProjectorEventKind : Kind
     class ProjectorEventKind {
@@ -676,48 +652,39 @@ classDiagram
         +Kind()* TypeKind_Job
         +CronSchedule() string
     }
-
-    class IAppDef {
-      …
-      +Extensions() []IExtension
-      +Functions() []IFunction
-      +Commands() []ICommand
-      +Queries() []IQuery
-      +Projectors() []IProjector
-      +Jobs() []IJob
-    }
-
-    IAppDef "1" *--> "0..*" IExtension : Extensions
-    IAppDef "1" *--> "0..*" IFunction : Functions
-    IAppDef "1" *--> "0..*" ICommand : Commands
-    IAppDef "1" *--> "0..*" IQuery : Queries
-    IAppDef "1" *--> "0..*" IProjector : Projectors
-    IAppDef "1" *--> "0..*" IJob : Jobs
 ```
 
 *Rem*: In the above diagram the Param and Result of the function are `IType`, in future versions it will be changed to an array of `[]IParam` and renamed to plural (`Params`, `Results`).
-
-### Workspaces
 
 ### Roles and ACL
 
 ```mermaid
     classDiagram
+    IType <|-- IWorkspace : inherits
+
+    class IWorkspace {
+        <<interface>>
+        +Kind()* TypeKind_Workspace
+        ...
+        +ACL() []IACLRule
+    }
+    IWorkspace "1" *--> "0..*" IACLRule : ACL for workspace
+    IWorkspace "1" *--> "0..*" IRole : roles
+
     IType <|-- IRole : inherits
     class IRole {
         <<interface>>
         +Kind()* TypeKind_Role
-        +ACL() []IACLRule
     }
-
-    IRole "1" *--> "1..*" IACLRule : ACL
 
     class IACLRule {
         <<interface>>
-        +Comment() []string
-        +Ops() []OperationKind
+        +Comment() string
+        +Ops() []OperationKind]
         +Policy() PolicyKind
-        +Resources() IResourcePattern
+        +Filter() IACLFilter
+        +Principal() IRole
+        +Workspace() IWorkspace
     }
 
     IACLRule "1" *--> "1..*" OperationKind : operations
@@ -739,29 +706,27 @@ classDiagram
         Deny
     }
 
-    IACLRule "1" *--> "1" IResourcePattern : resources
+    IACLRule "1" *--> "1" IACLFilter : resources filter
 
-    class IResourcePattern {
+    class IACLFilter {
         <<interface>>
-        +On()[]QName
         +Fields()[]FieldName
     }
 
-    IResourcePattern "1" *--> "1..*" QName : On
-    IResourcePattern "1" *--> "0..*" FieldName : Fields
+    IFilter <|-- IACLFilter : inherits
 
-    note for QName "names or patterns of resources"
-    note for FieldName "fields of records or view records for select and update operations"
+    note for IFilter "see filter/readme.md"
 
-    class IAppDef {
-      …
-      +Roles() []IRole
-      +ACL() []IACLRule
-    }
-
-    IAppDef "1" *--> "0..*" IRole : Roles
-    IAppDef "1" *--> "0..*" IACLRule : application ACL
+    IACLRule "1" *--> "1" IRole : principal
 ```
+
+### Filters
+
+### Tags
+
+### Rates and Limits
+
+### Workspaces
 
 ## Restrictions
 

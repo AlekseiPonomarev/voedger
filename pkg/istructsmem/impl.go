@@ -201,7 +201,8 @@ func (app *appStructsType) IsFunctionRateLimitsExceeded(funcQName appdef.QName, 
 		}
 		keys = append(keys, key)
 	}
-	return !app.buckets.TakeTokens(keys, 1)
+	ok, _ = app.buckets.TakeTokens(keys, 1)
+	return !ok
 }
 
 // istructs.IAppStructs.SyncProjectors
@@ -228,7 +229,7 @@ func (app *appStructsType) DescribePackageNames() (names []string) {
 	return names
 }
 
-// istructs.IAppStructs.DescribePackage: Describe package content
+// istructs.IAppStructs.DescribePoackage: Describe package content
 func (app *appStructsType) DescribePackage(name string) interface{} {
 	return app.describe().Packages[name]
 }

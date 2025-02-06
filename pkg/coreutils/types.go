@@ -31,15 +31,19 @@ type HTTPResponse struct {
 
 type ReqOptFunc func(opts *reqOpts)
 
-type FuncResponse struct {
-	*HTTPResponse
-	Sections []struct {
-		Elements [][][][]interface{} `json:"elements"`
-	} `json:"sections"`
-	NewIDs            map[string]int64
+type CommandResponse struct {
+	NewIDs            map[string]istructs.RecordID
 	CurrentWLogOffset istructs.Offset
 	SysError          SysError               `json:"sys.Error"`
 	CmdResult         map[string]interface{} `json:"Result"`
+}
+
+type FuncResponse struct {
+	*HTTPResponse
+	CommandResponse
+	Sections []struct {
+		Elements [][][][]interface{} `json:"elements"`
+	} `json:"sections"`
 }
 
 type FuncError struct {
@@ -96,24 +100,4 @@ type CUDs struct {
 type IReadFS interface {
 	fs.ReadDirFS
 	fs.ReadFileFS
-}
-
-type BLOBDesc struct {
-	Name     string
-	MimeType string
-}
-
-// moved here to avoid import cycle: state -> federation (for cmd storage) -> blobber (IFederation.UploadBLOBs([]blobber.BLOBWorkspaceTemplateField)) -> state
-type BLOBWorkspaceTemplateField struct {
-	BLOBDesc
-	FieldName string
-	Content   []byte
-	RecordID  istructs.RecordID
-}
-
-// for read and write
-// caller must read out and close the reader
-type BLOBReader struct {
-	io.ReadCloser
-	BLOBDesc
 }

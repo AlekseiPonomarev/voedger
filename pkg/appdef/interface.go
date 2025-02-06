@@ -18,14 +18,12 @@ type IAppDef interface {
 	// If not found then empty type with TypeKind_null is returned
 	Type(QName) IType
 
-	// Enumerates types.
-	//
-	// Types are enumerated in alphabetical order of QNames.
-	Types(func(IType) bool)
+	// Returns all application types from all workspaces in alphabetical order.
+	Types() []IType
 }
 
 type IAppDefBuilder interface {
-	ICommentsBuilder
+	ICommenter
 
 	IPackagesBuilder
 	IWorkspacesBuilder
