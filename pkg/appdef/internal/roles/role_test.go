@@ -67,9 +67,13 @@ func TestRoles(t *testing.T) {
 
 		_ = wsb.AddRole(writerRoleName)
 		wsb.GrantAll(
-			filter.QNames(docName, viewName),
+			filter.QNames(docName),
 			writerRoleName,
-			"grant all on doc & view to writer")
+			"grant all on doc to writer")
+		wsb.GrantAll(
+			filter.QNames(viewName),
+			writerRoleName,
+			"grant all on view to writer")
 		wsb.GrantAll(
 			filter.QNames(cmdName, queryName),
 			writerRoleName,
@@ -83,9 +87,13 @@ func TestRoles(t *testing.T) {
 
 		_ = wsb.AddRole(ownerRoleName)
 		wsb.GrantAll(
-			filter.QNames(docName, viewName),
+			filter.QNames(docName),
 			ownerRoleName,
-			"grant all on doc & view to owner")
+			"grant all on doc to owner")
+		wsb.GrantAll(
+			filter.QNames(viewName),
+			ownerRoleName,
+			"grant all on view to owner")
 		wsb.GrantAll(
 			filter.QNames(cmdName, queryName),
 			ownerRoleName,
@@ -105,13 +113,17 @@ func TestRoles(t *testing.T) {
 
 		_ = wsb.AddRole(intruderRoleName)
 		wsb.RevokeAll(
-			filter.QNames(docName, viewName),
+			filter.QNames(docName),
 			intruderRoleName,
-			"revoke all from intruder")
+			"revoke doc from intruder")
+		wsb.RevokeAll(
+			filter.QNames(viewName),
+			intruderRoleName,
+			"revoke view from intruder")
 		wsb.RevokeAll(
 			filter.QNames(cmdName, queryName),
 			intruderRoleName,
-			"revoke all from intruder")
+			"revoke funcs from intruder")
 
 		var err error
 		app, err = adb.Build()
@@ -179,5 +191,36 @@ func Test_RoleInheritanceWithComplexFilter(t *testing.T) {
 		app, err = adb.Build()
 		require.NoError(err)
 		require.NotNil(app)
+	})
+}
+
+// #3335: Test for published role
+func Test_RolePublished(t *testing.T) {
+	require := require.New(t)
+
+	var app appdef.IAppDef
+
+	wsName := appdef.NewQName("test", "ws")
+
+	roleName := appdef.NewQName("test", "role")
+
+	t.Run("should be ok to build application with published role", func(t *testing.T) {
+		adb := builder.New()
+		adb.AddPackage("test", "test.com/test")
+
+		wsb := adb.AddWorkspace(wsName)
+
+		wsb.AddRole(roleName).SetPublished(true)
+
+		var err error
+		app, err = adb.Build()
+		require.NoError(err)
+		require.NotNil(app)
+	})
+
+	t.Run("should be ok to find published role", func(t *testing.T) {
+		role := appdef.Role(app.Workspace(wsName).Type, roleName)
+		require.NotNil(role)
+		require.True(role.Published())
 	})
 }

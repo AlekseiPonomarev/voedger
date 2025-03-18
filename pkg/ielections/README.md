@@ -1,30 +1,4 @@
-# Elections Package
-
-```mermaid
-flowchart TB
-    A((Start)) --> B["Caller calls <br/>AcquireLeadership(key,val,duration)"]
-    B --> C{"Elections finalized?"}
-    C -- Yes --> D["Return nil (no leadership)"]
-    C -- No  --> E["InsertIfNotExist(key,val,ttl)"]
-    E -- "Fail or Err" --> D
-    E -- "Succeed" --> F["Create leadership ctx <br/> Return ctx to caller"]
-    F --> G["Spawn renewal goroutine"]
-
-    subgraph Renewal Loop
-    direction TB
-    G --> H["Wait (duration/2)"]
-    H --> I["CompareAndSwap(key,val,val,ttl)"]
-    I -- "Fail or Err" --> J["ReleaseLeadership(key)"]
-    I -- "OK" --> H
-    J --> H
-    end
-
-    R(("Caller calls<br/>ReleaseLeadership(key)")) --> S{"Key held locally?"}
-    S -- No --> T["Logs not held, done"]
-    S -- Yes --> U["CompareAndDelete(key,val)"]
-    U --> V["Cancel leadership context<br/>End leadership"]
-    V --> W[Done]
-```
+# elections package
 
 The **elections** package provides a simple, pluggable **leader election** mechanism using:
 
@@ -35,7 +9,6 @@ This design allows clean injection of custom storage implementations (e.g., in-m
 
 ## Table of Contents
 
-- [Installation](#installation)
 - [Interfaces](#interfaces)
     - [ITTLStorage](#ittlstorage)
     - [IElections](#ielections)
@@ -43,36 +16,31 @@ This design allows clean injection of custom storage implementations (e.g., in-m
     - [Providing the Elections Implementation](#providing-the-elections-implementation)
     - [Acquiring and Releasing Leadership](#acquiring-and-releasing-leadership)
     - [Performing Cleanup](#performing-cleanup)
-
+- [Flowchart](#flowchart)
 ---
-
-## Installation
-
-```bash
-go get github.com/voedger/voedger/pkg/elections
-```
 
 ## Interfaces
 
 ### ITTLStorage
 
 ```go
-type ITTLStorage[K comparable, V any] interface {
-    InsertIfNotExist(key K, val V, duration time.Duration) (bool, error)
-    CompareAndSwap(key K, oldVal V, newVal V, duration time.Duration) (bool, error)
-    CompareAndDelete(key K, val V) (bool, error)
+type ITTLStorage[K any, V any] interface {
+	InsertIfNotExist(key K, val V, ttlSeconds int) (bool, error)
+	CompareAndSwap(key K, oldVal V, newVal V, ttlSeconds int) (bool, error)
+	CompareAndDelete(key K, val V) (bool, error)
 }
 ```
 
 - InsertIfNotExist: tries to insert (key, val) with a TTL only if key does not exist.
-- CompareAndSwap: checks if the current value for `key` is `oldVal`. If it matches, sets it to `newVal` and updates the TTL to `ttl`.
+- CompareAndSwap: checks if the current value for `key` is `oldVal`. If it matches, sets it to `newVal` and updates the TTL to `ttlSeconds`.
 - CompareAndDelete: compares the current value for `key` with `val` and if they match, deletes the key, returning (true, nil). Otherwise, (false, nil).
 
 ### IElections
 
 ```go
+type LeadershipDurationSeconds int
 type IElections[K comparable, V any] interface {
-    AcquireLeadership(key K, val V, duration time.Duration) context.Context
+    AcquireLeadership(key K, val V, leadershipDurationSecods LeadershipDurationSeconds) context.Context
     ReleaseLeadership(key K)
 }
 ```
@@ -86,7 +54,7 @@ type IElections[K comparable, V any] interface {
 
 ```go
 // Provide returns an IElections[K, V] interface plus a cleanup function.
-func Provide[K comparable, V any](storage ITTLStorage[K, V], clock ITime) (IElections[K, V], func()) {
+func Provide[K any, V any](storage ITTLStorage[K, V], clock ITime) (IElections[K, V], func()) {
     // ...
 }
 ```
@@ -103,7 +71,7 @@ func Provide[K comparable, V any](storage ITTLStorage[K, V], clock ITime) (IElec
 elector, cleanup := elections.Provide(myStorage, myClock)
 
 // Acquire leadership
-ctx := elector.AcquireLeadership("myKey", "myValue", 5*time.Second)
+ctx := elector.AcquireLeadership("myKey", "myValue", 5) // 5 seconds
 select {
 case <-ctx.Done():
     fmt.Println("Failed to acquire leadership or it ended unexpectedly.")
@@ -130,3 +98,31 @@ cleanup()
 
 - The second return value from Provide(...), which we are calling cleanup(), stops all renewal goroutines and disallows any future calls to AcquireLeadership.
 - Any existing leadership contexts will be canceled.
+
+### Flowchart
+```mermaid
+flowchart TB
+    A((Start)) --> B["Caller calls <br/>AcquireLeadership(key,val,duration)"]
+    B --> C{"Elections finalized?"}
+    C -- Yes --> D["Return nil (no leadership)"]
+    C -- No  --> E["InsertIfNotExist(key,val,ttl)"]
+    E -- "Fail or Err" --> D
+    E -- "Succeed" --> F["Create leadership ctx <br/> Return ctx to caller"]
+    F --> G["Spawn renewal goroutine"]
+
+    subgraph Renewal Loop
+    direction TB
+    G --> H["Wait (duration/2)"]
+    H --> I["CompareAndSwap(key,val,val,ttl)"]
+    I -- "Fail or Err" --> J["ReleaseLeadership(key)"]
+    I -- "OK" --> H
+    J --> H
+    end
+
+    R(("Caller calls<br/>ReleaseLeadership(key)")) --> S{"Key held locally?"}
+    S -- No --> T["Logs not held, done"]
+    S -- Yes --> U["CompareAndDelete(key,val)"]
+    U --> V["Cancel leadership context<br/>End leadership"]
+    V --> W[Done]
+```
+

@@ -31,7 +31,7 @@ func Example() {
 
 		tags := appdef.MustParseQNames("test.dataTag", "test.engineTag", "test.structTag")
 		for _, tag := range tags {
-			wsb.AddTag(tag)
+			wsb.AddTag(tag, tag.Entity()) // #3363: let use entity name to test tag feature
 		}
 
 		numName := appdef.NewQName("test", "number")
@@ -143,7 +143,8 @@ func Example() {
 
 		readerName := appdef.NewQName("test", "reader")
 		reader := wsb.AddRole(readerName)
-		reader.SetComment("read-only role")
+		reader.SetComment("read-only published role")
+		reader.SetPublished(true)
 		wsb.Grant(
 			[]appdef.OperationKind{appdef.OperationKind_Select},
 			filter.QNames(docName, recName), []appdef.FieldName{"f1", "f2"},
@@ -159,13 +160,14 @@ func Example() {
 		writerName := appdef.NewQName("test", "writer")
 		writer := wsb.AddRole(writerName)
 		writer.SetComment("read-write role")
-		wsb.GrantAll(filter.QNames(docName, recName, viewName), writerName, "allow writer to do anything with test.doc, test.rec and test.view")
+		wsb.GrantAll(filter.QNames(docName, recName), writerName, "allow writer to do anything with test.doc and test.rec")
 		wsb.Revoke(
 			[]appdef.OperationKind{appdef.OperationKind_Update},
 			filter.QNames(docName),
 			nil,
 			writerName,
 			"disable writer to update test.doc")
+		wsb.GrantAll(filter.QNames(viewName), writerName, "allow writer to do anything with test.view")
 		wsb.GrantAll(filter.AllWSFunctions(wsName), writerName, "allow writer to execute all test functions")
 
 		rateName := appdef.NewQName("test", "rate")
@@ -205,9 +207,15 @@ func Example() {
 	//         "test.ws": {
 	//           "Descriptor": "test.wsDesc",
 	//           "Tags": {
-	//             "test.dataTag": {},
-	//             "test.engineTag": {},
-	//             "test.structTag": {}
+	//             "test.dataTag": {
+	//               "Feature": "dataTag"
+	//             },
+	//             "test.engineTag": {
+	//               "Feature": "engineTag"
+	//             },
+	//             "test.structTag": {
+	//               "Feature": "structTag"
+	//             }
 	//           },
 	//           "DataTypes": {
 	//             "test.number": {
@@ -571,7 +579,8 @@ func Example() {
 	//           },
 	//           "Roles": {
 	//             "test.reader": {
-	//               "Comment": "read-only role"
+	//               "Comment": "read-only published role",
+	//               "Published": true
 	//             },
 	//             "test.writer": {
 	//               "Comment": "read-write role"
@@ -623,7 +632,7 @@ func Example() {
 	//               "Principal": "test.reader"
 	//             },
 	//             {
-	//               "Comment": "allow writer to do anything with test.doc, test.rec and test.view",
+	//               "Comment": "allow writer to do anything with test.doc and test.rec",
 	//               "Policy": "Allow",
 	//               "Ops": [
 	//                 "Insert",
@@ -635,8 +644,7 @@ func Example() {
 	//               "Filter": {
 	//                 "QNames": [
 	//                   "test.doc",
-	//                   "test.rec",
-	//                   "test.view"
+	//                   "test.rec"
 	//                 ]
 	//               },
 	//               "Principal": "test.writer"
@@ -650,6 +658,21 @@ func Example() {
 	//               "Filter": {
 	//                 "QNames": [
 	//                   "test.doc"
+	//                 ]
+	//               },
+	//               "Principal": "test.writer"
+	//             },
+	//             {
+	//               "Comment": "allow writer to do anything with test.view",
+	//               "Policy": "Allow",
+	//               "Ops": [
+	//                 "Insert",
+	//                 "Update",
+	//                 "Select"
+	//               ],
+	//               "Filter": {
+	//                 "QNames": [
+	//                   "test.view"
 	//                 ]
 	//               },
 	//               "Principal": "test.writer"

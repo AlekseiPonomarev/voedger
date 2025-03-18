@@ -7,9 +7,6 @@ package router
 
 import (
 	"time"
-
-	"github.com/voedger/voedger/pkg/coreutils"
-	"github.com/voedger/voedger/pkg/iblobstorage"
 )
 
 const (
@@ -34,15 +31,13 @@ const (
 	URLPlaceholder_query            = "query"
 	URLPlaceholder_view             = "view"
 	URLPlaceholder_workspace        = "workspace"
+	URLPlaceholder_rolePkg          = "rolePkg"
+	URLPlaceholder_role             = "role"
 	hours24                         = 24 * time.Hour
 	DefaultRetryAfterSecondsOn503   = 1
 )
 
 var (
-	bearerPrefixLen                = len(coreutils.BearerPrefix)
-	onRequestCtxClosed      func() = nil // used in tests
-	adminEndpoint                  = "127.0.0.1:55555"
-	durationToRegisterFuncs        = map[iblobstorage.DurationType]string{
-		iblobstorage.DurationType_1Day: "c.sys.RegisterTempBLOB1d",
-	}
+	onRequestCtxClosed func() = nil // used in tests
+	adminEndpoint             = "127.0.0.1:55555"
 )

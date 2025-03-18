@@ -127,7 +127,7 @@ func Test_newRecord(t *testing.T) {
 			}
 
 			require.Equal(3, sysCnt) // sys.QName, sys.ID and sys.IsActive
-			require.Equal(sysCnt+10, cnt)
+			require.Equal(sysCnt+11, cnt)
 			require.Equal(doc.fields.FieldCount(), cnt)
 		})
 
@@ -192,7 +192,7 @@ func Test_newRecord(t *testing.T) {
 				}
 
 				require.Equal(5, sysCnt) // sys.QName, sys.ID sys.ParentID, sys.Container and sys.IsActive
-				require.Equal(sysCnt+10, cnt)
+				require.Equal(sysCnt+11, cnt)
 				require.Equal(rec.fields.FieldCount(), cnt)
 			})
 		})
@@ -504,13 +504,13 @@ func Test_fieldValue(t *testing.T) {
 	})
 }
 
-func TestModifiedFields(t *testing.T) {
+func TestSpecifiedValues(t *testing.T) {
 	require := require.New(t)
 	test := test()
 
 	t.Run("should has no modifications if new record", func(t *testing.T) {
 		rec := newRecord(test.AppCfg)
-		for range rec.ModifiedFields {
+		for range rec.SpecifiedValues {
 			t.Fail()
 		}
 	})
@@ -518,8 +518,8 @@ func TestModifiedFields(t *testing.T) {
 	testEnum := func(rec istructs.ICUDRow, want map[appdef.FieldName]interface{}) {
 		t.Run("enum", func(t *testing.T) {
 			got := make(map[appdef.FieldName]interface{})
-			for n, v := range rec.ModifiedFields {
-				got[n] = v
+			for n, v := range rec.SpecifiedValues {
+				got[n.Name()] = v
 			}
 			require.Equal(want, got)
 		})
@@ -527,8 +527,8 @@ func TestModifiedFields(t *testing.T) {
 		t.Run("breakable", func(t *testing.T) {
 			for stop := range want {
 				cnt := 0
-				for n := range rec.ModifiedFields {
-					if n == stop {
+				for n := range rec.SpecifiedValues {
+					if n.Name() == stop {
 						break
 					}
 					cnt++
@@ -545,14 +545,22 @@ func TestModifiedFields(t *testing.T) {
 		rec.PutString("string", "test")
 		rec.PutInt64("int64", 0)   // zero (0) value should be enumerated too
 		rec.PutBool("bool", false) // zero (false) value should be enumerated too
+		rec.PutRecordID("RecordID", 3)
+		rec.PutInt64("RecordID_2", 4)
+		rec.PutQName("QName", qNameMyQName)
 		require.NoError(rec.build())
 
 		testEnum(rec,
 			map[appdef.FieldName]interface{}{
-				"int32":  int32(1),
-				"string": "test",
-				"int64":  int64(0),
-				"bool":   false,
+				"int32":                     int32(1),
+				"string":                    "test",
+				"int64":                     int64(0),
+				"bool":                      false,
+				appdef.SystemField_QName:    test.testCDoc,
+				appdef.SystemField_IsActive: true,
+				"RecordID":                  istructs.RecordID(3),
+				"RecordID_2":                istructs.RecordID(4),
+				"QName":                     qNameMyQName,
 			})
 	})
 
@@ -565,6 +573,7 @@ func TestModifiedFields(t *testing.T) {
 		testEnum(rec,
 			map[appdef.FieldName]interface{}{
 				appdef.SystemField_IsActive: false,
+				appdef.SystemField_QName:    test.testCDoc,
 			})
 	})
 
@@ -579,9 +588,11 @@ func TestModifiedFields(t *testing.T) {
 
 		testEnum(rec,
 			map[appdef.FieldName]interface{}{
-				"bytes":  []byte{},
-				"string": "",
-				"raw":    []byte{},
+				"bytes":                     []byte{},
+				"string":                    "",
+				"raw":                       []byte{},
+				appdef.SystemField_QName:    test.testCDoc,
+				appdef.SystemField_IsActive: true,
 			})
 	})
 }

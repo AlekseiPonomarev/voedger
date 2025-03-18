@@ -148,7 +148,7 @@ func TestBasicUsage_RowsProcessorFactory(t *testing.T) {
 	requestSender := bus.NewIRequestSender(coreutils.MockTime, bus.GetTestSendTimeout(), func(requestCtx context.Context, request bus.Request, responder bus.IResponder) {
 		go func() {
 			// SendToBus op will send to the respCh chan so let's handle in a separate goroutine
-			processor, senderGetter := ProvideRowsProcessorFactory()(context.Background(), appDef, s, params,
+			processor, respWriterGetter := ProvideRowsProcessorFactory()(context.Background(), appDef, s, params,
 				resultMeta, responder, &testMetrics{}, rowsProcessorErrCh)
 
 			require.NoError(processor.SendAsync(work(1, "Cola", 10)))
@@ -156,7 +156,7 @@ func TestBasicUsage_RowsProcessorFactory(t *testing.T) {
 			require.NoError(processor.SendAsync(work(2, "Amaretto", 20)))
 			require.NoError(processor.SendAsync(work(4, "Cake", 40)))
 			processor.Close()
-			senderGetter().(bus.IResponseSenderCloseable).Close(nil)
+			respWriterGetter().Close(nil)
 		}()
 	})
 	responseCh, respMeta, responseErr, err := requestSender.SendRequest(context.Background(), bus.Request{})
@@ -418,16 +418,16 @@ func TestBasicUsage_ServiceFactory(t *testing.T) {
 	})
 
 	require.Equal(`[[[3,"White wine","Alcohol drinks"]]]`, result)
-	require.Contains(metricNames, queriesTotal)
-	require.Contains(metricNames, queriesSeconds)
-	require.Contains(metricNames, buildSeconds)
-	require.Contains(metricNames, execSeconds)
-	require.Contains(metricNames, execFieldsSeconds)
-	require.Contains(metricNames, execEnrichSeconds)
-	require.Contains(metricNames, execFilterSeconds)
-	require.Contains(metricNames, execOrderSeconds)
-	require.Contains(metricNames, execCountSeconds)
-	require.Contains(metricNames, execSendSeconds)
+	require.Contains(metricNames, Metric_QueriesTotal)
+	require.Contains(metricNames, Metric_QueriesSeconds)
+	require.Contains(metricNames, Metric_BuildSeconds)
+	require.Contains(metricNames, Metric_ExecSeconds)
+	require.Contains(metricNames, Metric_ExecFieldsSeconds)
+	require.Contains(metricNames, Metric_ExecEnrichSeconds)
+	require.Contains(metricNames, Metric_ExecFilterSeconds)
+	require.Contains(metricNames, Metric_ExecOrderSeconds)
+	require.Contains(metricNames, Metric_ExecCountSeconds)
+	require.Contains(metricNames, Metric_ExecSendSeconds)
 }
 
 func TestRawMode(t *testing.T) {
@@ -453,7 +453,7 @@ func TestRawMode(t *testing.T) {
 	requestSender := bus.NewIRequestSender(coreutils.MockTime, bus.GetTestSendTimeout(), func(requestCtx context.Context, request bus.Request, responder bus.IResponder) {
 		go func() {
 			// SendToBus op will send to the respCh chan so let's handle in a separate goroutine
-			processor, senderGetter := ProvideRowsProcessorFactory()(context.Background(), appDef, &mockState{},
+			processor, respWriterGetter := ProvideRowsProcessorFactory()(context.Background(), appDef, &mockState{},
 				queryParams{}, resultMeta, responder, &testMetrics{}, rowsProcessorErrCh)
 
 			require.NoError(processor.SendAsync(rowsWorkpiece{
@@ -468,7 +468,7 @@ func TestRawMode(t *testing.T) {
 				},
 			}))
 			processor.Close()
-			senderGetter().(bus.IResponseSenderCloseable).Close(nil)
+			respWriterGetter().Close(nil)
 		}()
 	})
 
