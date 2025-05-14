@@ -15,14 +15,15 @@ import (
 	"github.com/voedger/voedger/pkg/appparts"
 	"github.com/voedger/voedger/pkg/apppartsctl"
 	"github.com/voedger/voedger/pkg/bus"
-	"github.com/voedger/voedger/pkg/coreutils"
 	"github.com/voedger/voedger/pkg/coreutils/federation"
 	"github.com/voedger/voedger/pkg/extensionpoints"
+	"github.com/voedger/voedger/pkg/goutils/timeu"
 	"github.com/voedger/voedger/pkg/iblobstorage"
 	"github.com/voedger/voedger/pkg/ielections"
 	"github.com/voedger/voedger/pkg/iprocbus"
 	"github.com/voedger/voedger/pkg/iprocbusmem"
 	"github.com/voedger/voedger/pkg/isecrets"
+	"github.com/voedger/voedger/pkg/isequencer"
 	"github.com/voedger/voedger/pkg/istorage"
 	"github.com/voedger/voedger/pkg/istructs"
 	"github.com/voedger/voedger/pkg/istructsmem"
@@ -135,7 +136,7 @@ type AppsExtensionPoints map[appdef.AppQName]extensionpoints.IExtensionPoint
 
 type VVMConfig struct {
 	VVMAppsBuilder             VVMAppsBuilder // is a map
-	Time                       coreutils.ITime
+	Time                       timeu.ITime
 	RouterWriteTimeout         int
 	RouterReadTimeout          int
 	RouterConnectionsLimit     int
@@ -156,7 +157,7 @@ type VVMConfig struct {
 	processorsChannels         []ProcesorChannel
 	ActualizerStateOpts        []state.StateOptFunc
 	SecretsReader              isecrets.ISecretReader
-	SmtpConfig                 smtp.Cfg
+	SMTPConfig                 smtp.Cfg
 	WSPostInitFunc             workspace.WSPostInitFunc
 	DataPath                   string
 	MetricsServicePort         metrics.MetricsServicePort
@@ -176,6 +177,9 @@ type VVMConfig struct {
 	// [~server.design.orch/VVMConfig.Orch~impl]
 	NumVVM NumVVM // amount of VVMs in the cluster. Default 1
 	IP     net.IP // current IP of the VVM. Used as the value for leaderhsip elections
+
+	// [~server.design.sequences/cmp.VVMConfig.SequencesTrustLevel~impl]
+	SequencesTrustLevel isequencer.SequencesTrustLevel
 }
 
 type VoedgerVM struct {

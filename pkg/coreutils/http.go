@@ -122,7 +122,13 @@ func WithRetryOnAnyError(timeout time.Duration, retryDelay time.Duration) ReqOpt
 	return WithRetryOnCertainError(func(error) bool { return true }, timeout, retryDelay)
 }
 
-func WithAuthorizeByIfNot(principalToken string) ReqOptFunc {
+func WithSkipRetryOn503() ReqOptFunc {
+	return func(opts *reqOpts) {
+		opts.skipRetryOn503 = true
+	}
+}
+
+func WithDefaultAuthorize(principalToken string) ReqOptFunc {
 	return func(po *reqOpts) {
 		if _, ok := po.headers[Authorization]; !ok {
 			po.headers[Authorization] = BearerPrefix + principalToken
@@ -136,6 +142,14 @@ func WithRelativeURL(relativeURL string) ReqOptFunc {
 	}
 }
 
+func WithDefaultMethod(m string) ReqOptFunc {
+	return func(opts *reqOpts) {
+		if len(opts.method) == 0 {
+			opts.method = m
+		}
+	}
+}
+
 func WithMethod(m string) ReqOptFunc {
 	return func(po *reqOpts) {
 		po.method = m
@@ -146,8 +160,8 @@ func Expect409(expected ...string) ReqOptFunc {
 	return WithExpectedCode(http.StatusConflict, expected...)
 }
 
-func Expect404() ReqOptFunc {
-	return WithExpectedCode(http.StatusNotFound)
+func Expect404(expected ...string) ReqOptFunc {
+	return WithExpectedCode(http.StatusNotFound, expected...)
 }
 
 func Expect401() ReqOptFunc {
@@ -160,6 +174,10 @@ func Expect403(expectedMessages ...string) ReqOptFunc {
 
 func Expect400(expectErrorContains ...string) ReqOptFunc {
 	return WithExpectedCode(http.StatusBadRequest, expectErrorContains...)
+}
+
+func Expect405(expectErrorContains ...string) ReqOptFunc {
+	return WithExpectedCode(http.StatusMethodNotAllowed, expectErrorContains...)
 }
 
 func Expect423(expectErrorContains ...string) ReqOptFunc {
@@ -209,6 +227,7 @@ type reqOpts struct {
 	retriersOnErrors      []retrier
 	bodyReader            io.Reader
 	withoutAuth           bool
+	skipRetryOn503        bool
 }
 
 // body and bodyReader are mutual exclusive
@@ -249,7 +268,6 @@ func (c *implIHTTPClient) req(urlStr string, body string, optFuncs ...ReqOptFunc
 	opts := &reqOpts{
 		headers: map[string]string{},
 		cookies: map[string]string{},
-		method:  http.MethodGet,
 	}
 	optFuncs = append(optFuncs, WithRetryOnCertainError(func(err error) bool {
 		// https://github.com/voedger/voedger/issues/1694
@@ -257,6 +275,9 @@ func (c *implIHTTPClient) req(urlStr string, body string, optFuncs ...ReqOptFunc
 	}, retryOn_WSAECONNREFUSED_Timeout, retryOn_WSAECONNREFUSED_Delay))
 	for _, optFunc := range optFuncs {
 		optFunc(opts)
+	}
+	if len(opts.method) == 0 {
+		opts.method = http.MethodGet
 	}
 
 	mutualExclusiveOpts := 0
@@ -274,7 +295,7 @@ func (c *implIHTTPClient) req(urlStr string, body string, optFuncs ...ReqOptFunc
 	}
 
 	if len(opts.expectedHTTPCodes) == 0 {
-		opts.expectedHTTPCodes = append(opts.expectedHTTPCodes, http.StatusOK)
+		opts.expectedHTTPCodes = append(opts.expectedHTTPCodes, http.StatusOK, http.StatusCreated)
 	}
 	if len(opts.relativeURL) > 0 {
 		netURL, err := url.Parse(urlStr)
@@ -314,7 +335,8 @@ reqLoop:
 		if opts.responseHandler == nil {
 			defer resp.Body.Close()
 		}
-		if resp.StatusCode == http.StatusServiceUnavailable && !slices.Contains(opts.expectedHTTPCodes, http.StatusServiceUnavailable) {
+		if resp.StatusCode == http.StatusServiceUnavailable && !slices.Contains(opts.expectedHTTPCodes, http.StatusServiceUnavailable) &&
+			!opts.skipRetryOn503 {
 			if err := discardRespBody(resp); err != nil {
 				return nil, err
 			}
@@ -353,11 +375,16 @@ reqLoop:
 		statusErr = fmt.Errorf("%w: %d, %s", ErrUnexpectedStatusCode, resp.StatusCode, respBody)
 	}
 	if resp.StatusCode != http.StatusOK && len(opts.expectedErrorContains) > 0 {
-		sysError := map[string]interface{}{}
-		if err := json.Unmarshal([]byte(respBody), &sysError); err != nil {
+		respMap := map[string]interface{}{}
+		if err := json.Unmarshal([]byte(respBody), &respMap); err != nil {
 			return nil, err
 		}
-		actualError := sysError["sys.Error"].(map[string]interface{})["Message"].(string)
+		actualError := ""
+		if strings.Contains(urlStr, "api/v2") {
+			actualError = respMap["message"].(string)
+		} else {
+			actualError = respMap["sys.Error"].(map[string]interface{})["Message"].(string)
+		}
 		if !containsAllMessages(opts.expectedErrorContains, actualError) {
 			return nil, fmt.Errorf(`actual error message "%s" does not contain the expected messages %v`, actualError, opts.expectedErrorContains)
 		}
@@ -388,6 +415,19 @@ func (resp *HTTPResponse) ExpectedHTTPCodes() []int {
 
 func (resp *HTTPResponse) Println() {
 	log.Println(resp.Body)
+}
+
+func (resp *HTTPResponse) PrintJSON() {
+	obj := make(map[string]interface{})
+	err := json.Unmarshal([]byte(resp.Body), &obj)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	bb, err := json.MarshalIndent(obj, "", "	")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	log.Println("\n", string(bb))
 }
 
 func (resp *HTTPResponse) getError(t *testing.T) map[string]interface{} {
@@ -457,7 +497,7 @@ func (resp *FuncResponse) NewID() istructs.RecordID {
 }
 
 func (resp *FuncResponse) IsEmpty() bool {
-	return len(resp.Sections) == 0
+	return len(resp.Sections) == 0 && len(resp.QPv2Response) == 0
 }
 
 func (fe FuncError) Error() string {

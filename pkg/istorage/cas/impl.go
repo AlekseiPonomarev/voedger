@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	"github.com/gocql/gocql"
-	"github.com/voedger/voedger/pkg/coreutils"
 	"github.com/voedger/voedger/pkg/goutils/logger"
+	"github.com/voedger/voedger/pkg/goutils/timeu"
 
 	"github.com/voedger/voedger/pkg/istorage"
 )
@@ -127,7 +127,7 @@ func (p implIAppStorageFactory) Init(appName istorage.SafeAppName) error {
 	return nil
 }
 
-func (p implIAppStorageFactory) StopGoroutines() { return }
+func (p implIAppStorageFactory) StopGoroutines() {}
 
 type appStorageType struct {
 	cluster  *gocql.ClusterConfig
@@ -364,8 +364,8 @@ func (s *appStorageType) GetBatch(pKey []byte, items []istorage.GetBatchItem) (e
 	return scannerCloser(scanner, nil)
 }
 
-func (p implIAppStorageFactory) Time() coreutils.ITime {
-	return coreutils.NewITime()
+func (p implIAppStorageFactory) Time() timeu.ITime {
+	return timeu.NewITime()
 }
 
 func scannerCloser(scanner gocql.Scanner, err error) error {

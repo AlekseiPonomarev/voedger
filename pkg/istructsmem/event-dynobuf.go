@@ -16,7 +16,7 @@ import (
 )
 
 func storeEvent(ev *eventType, buf *bytes.Buffer) {
-	utils.WriteUint16(buf, ev.qNameID())
+	utils.WriteUint16(buf, ev.QNameID())
 
 	storeEventCreateParams(ev, buf)
 	storeEventBuildError(ev, buf)
@@ -153,6 +153,8 @@ func loadEvent(ev *eventType, codecVer byte, buf *bytes.Buffer) (err error) {
 	if err := loadEventCUDs(ev, codecVer, buf); err != nil {
 		return enrichError(err, "%v CUDs", ev.name)
 	}
+
+	ev.isStored = true
 
 	return nil
 }

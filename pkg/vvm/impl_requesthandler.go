@@ -6,11 +6,9 @@ package vvm
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/appparts"
@@ -19,6 +17,7 @@ import (
 	"github.com/voedger/voedger/pkg/goutils/logger"
 	"github.com/voedger/voedger/pkg/iprocbus"
 	"github.com/voedger/voedger/pkg/istructs"
+	"github.com/voedger/voedger/pkg/processors"
 	commandprocessor "github.com/voedger/voedger/pkg/processors/command"
 	queryprocessor "github.com/voedger/voedger/pkg/processors/query"
 	"github.com/voedger/voedger/pkg/processors/query2"
@@ -29,19 +28,6 @@ func provideRequestHandler(appParts appparts.IAppPartitions, procbus iprocbus.IP
 	qpcgIdx_v2 QueryProcessorsChannelGroupIdxType_V2,
 	cpAmount istructs.NumCommandProcessors, vvmApps VVMApps) bus.RequestHandler {
 	return func(requestCtx context.Context, request bus.Request, responder bus.IResponder) {
-		funcQName := request.QName
-		if !request.IsAPIV2 {
-			if len(request.Resource) <= ShortestPossibleFunctionNameLen {
-				bus.ReplyBadRequest(responder, "wrong function name: "+request.Resource)
-				return
-			}
-			var err error
-			funcQName, err = appdef.ParseQName(request.Resource[2:])
-			if err != nil {
-				bus.ReplyBadRequest(responder, "wrong function name: "+request.Resource)
-				return
-			}
-		}
 		if logger.IsVerbose() {
 			// FIXME: eliminate this. Unlogged params are logged
 			logger.Verbose("request body:\n", string(request.Body))
@@ -52,7 +38,7 @@ func provideRequestHandler(appParts appparts.IAppPartitions, procbus iprocbus.IP
 			return
 		}
 
-		token, err := getPrincipalToken(request)
+		token, err := bus.GetPrincipalToken(request)
 		if err != nil {
 			bus.ReplyAccessDeniedUnauthorized(responder, err.Error())
 			return
@@ -71,17 +57,41 @@ func provideRequestHandler(appParts appparts.IAppPartitions, procbus iprocbus.IP
 
 		// deliver to processors
 		if request.IsAPIV2 {
-			queryParams, err := query2.ParseQueryParams(request.Query)
-			if err != nil {
-				bus.ReplyBadRequest(responder, "parse query params failed: "+err.Error())
-				return
-			}
-			iqm := query2.NewIQueryMessage(requestCtx, request.AppQName, request.WSID, responder, *queryParams, request.DocID, query2.ApiPath(request.ApiPath), request.QName,
-				partitionID, request.Host, token, request.WorkspaceQName)
-			if !procbus.Submit(uint(qpcgIdx_v2), 0, iqm) {
-				bus.ReplyErrf(responder, http.StatusServiceUnavailable, "no query_v2 processors available")
+			if request.Method == http.MethodGet {
+				// QP
+				queryParams, err := query2.ParseQueryParams(request.Query)
+				if err != nil {
+					bus.ReplyBadRequest(responder, "parse query params failed: "+err.Error())
+					return
+				}
+
+				iqm := query2.NewIQueryMessage(requestCtx, request.AppQName, request.WSID, responder, *queryParams, request.DocID, processors.APIPath(request.APIPath), request.QName,
+					partitionID, request.Host, token, request.WorkspaceQName, request.Header[coreutils.Accept])
+				if !procbus.Submit(uint(qpcgIdx_v2), 0, iqm) {
+					bus.ReplyErrf(responder, http.StatusServiceUnavailable, "no query_v2 processors available")
+				}
+			} else {
+				// CP
+
+				// TODO: use appQName to calculate cmdProcessorIdx in solid range [0..cpCount)
+				cmdProcessorIdx := uint(partitionID) % uint(cpAmount)
+				icm := commandprocessor.NewCommandMessage(requestCtx, request.Body, request.AppQName, request.WSID, responder, partitionID, request.QName, token,
+					request.Host, processors.APIPath(request.APIPath), istructs.RecordID(request.DocID), request.Method)
+				if !procbus.Submit(uint(cpchIdx), cmdProcessorIdx, icm) {
+					bus.ReplyErrf(responder, http.StatusServiceUnavailable, fmt.Sprintf("command processor of partition %d is busy", partitionID))
+				}
 			}
 		} else {
+			if len(request.Resource) <= ShortestPossibleFunctionNameLen {
+				bus.ReplyBadRequest(responder, "wrong function name: "+request.Resource)
+				return
+			}
+			funcQName, err := appdef.ParseQName(request.Resource[2:])
+			if err != nil {
+				bus.ReplyBadRequest(responder, "wrong function name: "+request.Resource)
+				return
+			}
+
 			switch request.Resource[:1] {
 			case "q":
 				iqm := queryprocessor.NewQueryMessage(requestCtx, request.AppQName, partitionID, request.WSID, responder, request.Body, funcQName, request.Host, token)
@@ -91,7 +101,8 @@ func provideRequestHandler(appParts appparts.IAppPartitions, procbus iprocbus.IP
 			case "c":
 				// TODO: use appQName to calculate cmdProcessorIdx in solid range [0..cpCount)
 				cmdProcessorIdx := uint(partitionID) % uint(cpAmount)
-				icm := commandprocessor.NewCommandMessage(requestCtx, request.Body, request.AppQName, request.WSID, responder, partitionID, funcQName, token, request.Host)
+				icm := commandprocessor.NewCommandMessage(requestCtx, request.Body, request.AppQName, request.WSID, responder, partitionID, funcQName, token,
+					request.Host, processors.APIPath(request.APIPath), istructs.RecordID(request.DocID), request.Method)
 				if !procbus.Submit(uint(cpchIdx), cmdProcessorIdx, icm) {
 					bus.ReplyErrf(responder, http.StatusServiceUnavailable, fmt.Sprintf("command processor of partition %d is busy", partitionID))
 				}
@@ -100,31 +111,4 @@ func provideRequestHandler(appParts appparts.IAppPartitions, procbus iprocbus.IP
 			}
 		}
 	}
-}
-
-func getPrincipalToken(request bus.Request) (token string, err error) {
-	authHeader := request.Header[coreutils.Authorization]
-	if len(authHeader) == 0 {
-		return "", nil
-	}
-	if strings.HasPrefix(authHeader, coreutils.BearerPrefix) {
-		return strings.ReplaceAll(authHeader, coreutils.BearerPrefix, ""), nil
-	}
-	if strings.HasPrefix(authHeader, "Basic ") {
-		return getBasicAuthToken(authHeader)
-	}
-	return "", errors.New("unsupported Authorization header: " + authHeader)
-}
-
-func getBasicAuthToken(authHeader string) (token string, err error) {
-	headerValue := strings.ReplaceAll(authHeader, "Basic ", "")
-	headerValueBytes, err := base64.StdEncoding.DecodeString(headerValue)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode base64 Basic Authorization header value: %w", err)
-	}
-	headerValue = string(headerValueBytes)
-	if strings.Count(headerValue, ":") != 1 {
-		return "", errors.New("unexpected Basic Authorization header format")
-	}
-	return strings.ReplaceAll(headerValue, ":", ""), nil
 }

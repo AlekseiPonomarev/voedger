@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/voedger/voedger/pkg/appdef"
-	"github.com/voedger/voedger/pkg/coreutils"
+	"github.com/voedger/voedger/pkg/goutils/timeu"
 	"github.com/voedger/voedger/pkg/istructs"
 )
 
@@ -29,7 +29,7 @@ type Request struct {
 	WorkspaceQName appdef.QName // actually wsKind
 	IsAPIV2        bool
 	DocID          istructs.IDType
-	ApiPath        int
+	APIPath        int
 }
 
 type ResponseMeta struct {
@@ -47,7 +47,7 @@ const (
 
 type implIRequestSender struct {
 	timeout        SendTimeout
-	tm             coreutils.ITime
+	tm             timeu.ITime
 	requestHandler RequestHandler
 }
 
@@ -57,7 +57,7 @@ type implResponseWriter struct {
 	ch          chan any
 	clientCtx   context.Context
 	sendTimeout SendTimeout
-	tm          coreutils.ITime
+	tm          timeu.ITime
 	resultErr   *error
 }
 

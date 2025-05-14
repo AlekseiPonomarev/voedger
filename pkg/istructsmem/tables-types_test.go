@@ -29,7 +29,7 @@ func Test_newRecord(t *testing.T) {
 		require.Equal(appdef.NullQName, rec.QName())
 		require.Equal(istructs.RecordID(100500), rec.ID())
 		require.Equal(istructs.NullRecordID, rec.Parent())
-		require.Equal("", rec.Container())
+		require.Empty(rec.Container())
 	})
 
 	t.Run("newRecord must return empty, nullQName record", func(t *testing.T) {
@@ -41,7 +41,7 @@ func Test_newRecord(t *testing.T) {
 			require.Equal(appdef.NullQName, r.QName())
 			require.Equal(istructs.NullRecordID, r.ID())
 			require.Equal(istructs.NullRecordID, r.Parent())
-			require.Equal("", r.Container())
+			require.Empty(r.Container())
 		})
 
 		t.Run("test as ICRecord", func(t *testing.T) {
@@ -54,7 +54,7 @@ func Test_newRecord(t *testing.T) {
 			require.Equal(appdef.NullQName, r.AsQName(appdef.SystemField_QName))
 			require.Equal(istructs.NullRecordID, r.AsRecordID(appdef.SystemField_ID))
 			require.Equal(istructs.NullRecordID, r.AsRecordID(appdef.SystemField_ParentID))
-			require.Equal("", r.AsString(appdef.SystemField_Container))
+			require.Empty(r.AsString(appdef.SystemField_Container))
 			require.True(r.AsBool(appdef.SystemField_IsActive))
 		})
 
@@ -79,7 +79,7 @@ func Test_newRecord(t *testing.T) {
 			require.Equal(test.testCRec, rec.QName())
 			require.Equal(istructs.NullRecordID, rec.ID())
 			require.Equal(istructs.NullRecordID, rec.Parent())
-			require.Equal("", rec.Container())
+			require.Empty(rec.Container())
 			require.True(rec.IsActive())
 		})
 	})
@@ -91,7 +91,7 @@ func Test_newRecord(t *testing.T) {
 		require.Equal(istructs.RecordID(100500), doc.ID())
 		require.Equal(istructs.RecordID(100500), doc.AsRecordID(appdef.SystemField_ID))
 		require.Equal(istructs.NullRecordID, doc.Parent())
-		require.Equal("", doc.Container())
+		require.Empty(doc.Container())
 		require.True(doc.IsActive())
 
 		testTestCDoc(t, doc, 100500)
@@ -127,7 +127,7 @@ func Test_newRecord(t *testing.T) {
 			}
 
 			require.Equal(3, sysCnt) // sys.QName, sys.ID and sys.IsActive
-			require.Equal(sysCnt+11, cnt)
+			require.Equal(sysCnt+test.testRowUserFieldCount, cnt)
 			require.Equal(doc.fields.FieldCount(), cnt)
 		})
 
@@ -139,7 +139,7 @@ func Test_newRecord(t *testing.T) {
 			require.Equal(recID, rec.ID())
 			require.Equal(recID, rec.AsRecordID(appdef.SystemField_ID))
 			require.Equal(istructs.NullRecordID, rec.Parent())
-			require.Equal("", rec.Container())
+			require.Empty(rec.Container())
 			require.True(rec.IsActive())
 
 			testTestCRec(t, rec, recID)
@@ -192,7 +192,7 @@ func Test_newRecord(t *testing.T) {
 				}
 
 				require.Equal(5, sysCnt) // sys.QName, sys.ID sys.ParentID, sys.Container and sys.IsActive
-				require.Equal(sysCnt+11, cnt)
+				require.Equal(sysCnt+test.testRowUserFieldCount, cnt)
 				require.Equal(rec.fields.FieldCount(), cnt)
 			})
 		})
@@ -235,7 +235,7 @@ func Test_LoadStoreRecord_Bytes(t *testing.T) {
 		store_codec_RawDynoBuffer := func(row *recordType) (out []byte) {
 			buf := new(bytes.Buffer)
 			_ = binary.Write(buf, binary.BigEndian, codec_RawDynoBuffer)
-			id, err := row.qNameID()
+			id, err := row.QNameID()
 			require.NoError(err)
 			_ = binary.Write(buf, binary.BigEndian, int16(id))
 			if row.QName() == appdef.NullQName {
@@ -384,6 +384,8 @@ func Test_LoadStoreRecord_Bytes(t *testing.T) {
 
 		t.Run("should be ok to build new ver of application", func(t *testing.T) {
 			wsb := adb.AddWorkspace(testData.wsName)
+			wsb.AddCDoc(appdef.NewQName("test", "WSDesc"))
+			wsb.SetDescriptor(appdef.NewQName("test", "WSDesc"))
 			newCDoc := wsb.AddCDoc(test.testCDoc)
 
 			oldCDoc := appdef.CDoc(rec1.appCfg.AppDef.Type, test.testCDoc)
@@ -438,11 +440,13 @@ func Test_fieldValue(t *testing.T) {
 			rec := newTestCDoc(100500)
 			tests := []struct {
 				f appdef.FieldName
-				v interface{}
+				v any
 			}{
 				{appdef.SystemField_QName, test.testCDoc},
 				{appdef.SystemField_ID, istructs.RecordID(100500)},
 				{appdef.SystemField_IsActive, true},
+				{"int8", int8(-2)},
+				{"int16", int16(-1)},
 				{"int32", int32(1)},
 				{"int64", int64(2)},
 				{"float32", float32(3)},
@@ -466,7 +470,7 @@ func Test_fieldValue(t *testing.T) {
 			vv := newTestViewValue()
 			tests := []struct {
 				f appdef.FieldName
-				v interface{}
+				v any
 			}{
 				{appdef.SystemField_QName, test.testViewRecord.name},
 				{test.testViewRecord.valueFields.buyer, test.buyerValue},

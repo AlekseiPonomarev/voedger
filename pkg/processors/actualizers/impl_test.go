@@ -18,14 +18,16 @@ import (
 	"github.com/voedger/voedger/pkg/appdef/builder"
 	"github.com/voedger/voedger/pkg/appdef/filter"
 	"github.com/voedger/voedger/pkg/appparts"
-	"github.com/voedger/voedger/pkg/coreutils"
 	wsdescutil "github.com/voedger/voedger/pkg/coreutils/testwsdesc"
+	"github.com/voedger/voedger/pkg/goutils/testingu"
+	"github.com/voedger/voedger/pkg/goutils/timeu"
 	"github.com/voedger/voedger/pkg/iextengine"
 	"github.com/voedger/voedger/pkg/in10n"
 	"github.com/voedger/voedger/pkg/in10nmem"
 	"github.com/voedger/voedger/pkg/iratesce"
 	"github.com/voedger/voedger/pkg/isecrets"
 	"github.com/voedger/voedger/pkg/isecretsimpl"
+	"github.com/voedger/voedger/pkg/isequencer"
 	"github.com/voedger/voedger/pkg/istorage"
 	"github.com/voedger/voedger/pkg/istorage/mem"
 	istorageimpl "github.com/voedger/voedger/pkg/istorage/provider"
@@ -81,8 +83,9 @@ func TestBasicUsage_SynchronousActualizer(t *testing.T) {
 		},
 		&BasicAsyncActualizerConfig{})
 
-	createWS(appStructs, istructs.WSID(1001), testWorkspace, testWorkspaceDescriptor, istructs.PartitionID(1), istructs.Offset(1))
-	createWS(appStructs, istructs.WSID(1002), testWorkspace, testWorkspaceDescriptor, istructs.PartitionID(1), istructs.Offset(1))
+	idGen := istructsmem.NewIDGenerator()
+	createWS(appStructs, istructs.WSID(1001), testWorkspace, testWorkspaceDescriptor, istructs.PartitionID(1), istructs.Offset(1), idGen)
+	createWS(appStructs, istructs.WSID(1002), testWorkspace, testWorkspaceDescriptor, istructs.PartitionID(1), istructs.Offset(2), idGen)
 
 	appParts.DeployAppPartitions(istructs.AppQName_test1_app1, []istructs.PartitionID{1})
 
@@ -258,7 +261,7 @@ func deployTestAppEx(
 		panic(err)
 	}
 
-	var vvmName string = "testVVM"
+	vvmName := "testVVM"
 
 	if actualizerCfg.VvmName == "" {
 		actualizerCfg.VvmName = vvmName
@@ -282,13 +285,13 @@ func deployTestAppEx(
 	if cachedStorage {
 		storageProvider = istoragecache.Provide(
 			1000000,
-			istorageimpl.Provide(mem.Provide(coreutils.MockTime)),
+			istorageimpl.Provide(mem.Provide(testingu.MockTime)),
 			metrics,
 			vvmName,
-			coreutils.MockTime,
+			testingu.MockTime,
 		)
 	} else {
-		storageProvider = istorageimpl.Provide(mem.Provide(coreutils.MockTime))
+		storageProvider = istorageimpl.Provide(mem.Provide(testingu.MockTime))
 	}
 
 	var (
@@ -302,7 +305,7 @@ func deployTestAppEx(
 			ChannelsPerSubject:      10,
 			Subscriptions:           1000,
 			SubscriptionsPerSubject: 10,
-		}, coreutils.NewITime())
+		}, timeu.NewITime())
 		actualizerCfg.Broker = n10nBroker
 	} else {
 		n10nBroker = actualizerCfg.Broker
@@ -312,7 +315,8 @@ func deployTestAppEx(
 		cfgs,
 		iratesce.TestBucketsFactory,
 		payloads.ProvideIAppTokensFactory(itokensjwt.TestTokensJWT()),
-		storageProvider)
+		storageProvider,
+		isequencer.SequencesTrustLevel_0)
 
 	appStructs, err = appStructsProvider.BuiltIn(appName)
 	if err != nil {
@@ -369,7 +373,8 @@ func deployTestAppEx(
 	return appParts, actualizers, appStructs, start, stop
 }
 
-func createWS(appStructs istructs.IAppStructs, ws istructs.WSID, wsKind, wsDescriptorKind appdef.QName, partition istructs.PartitionID, offset istructs.Offset) {
+func createWS(appStructs istructs.IAppStructs, ws istructs.WSID, wsKind, wsDescriptorKind appdef.QName, partition istructs.PartitionID, offset istructs.Offset,
+	idGen istructs.IIDGenerator) {
 	now := time.Now()
 	// Create workspace
 	rebWs := appStructs.Events().GetNewRawEventBuilder(istructs.NewRawEventBuilderParams{
@@ -390,7 +395,7 @@ func createWS(appStructs istructs.IAppStructs, ws istructs.WSID, wsKind, wsDescr
 	if err != nil {
 		panic(err)
 	}
-	wsEvent, err := appStructs.Events().PutPlog(rawWsEvent, nil, istructsmem.NewIDGenerator())
+	wsEvent, err := appStructs.Events().PutPlog(rawWsEvent, nil, idGen)
 	if err != nil {
 		panic(err)
 	}
@@ -420,9 +425,10 @@ func Test_ErrorInSyncActualizer(t *testing.T) {
 		},
 		&BasicAsyncActualizerConfig{})
 
-	createWS(appStructs, istructs.WSID(1001), testWorkspace, testWorkspaceDescriptor, istructs.PartitionID(1), istructs.Offset(1))
-	createWS(appStructs, istructs.WSID(1002), testWorkspace, testWorkspaceDescriptor, istructs.PartitionID(1), istructs.Offset(1))
-	createWS(appStructs, istructs.WSID(1099), testWorkspace, testWorkspaceDescriptor, istructs.PartitionID(1), istructs.Offset(1))
+	idGen := istructsmem.NewIDGenerator()
+	createWS(appStructs, istructs.WSID(1001), testWorkspace, testWorkspaceDescriptor, istructs.PartitionID(1), istructs.Offset(1), idGen)
+	createWS(appStructs, istructs.WSID(1002), testWorkspace, testWorkspaceDescriptor, istructs.PartitionID(1), istructs.Offset(2), idGen)
+	createWS(appStructs, istructs.WSID(1099), testWorkspace, testWorkspaceDescriptor, istructs.PartitionID(1), istructs.Offset(3), idGen)
 
 	appParts.DeployAppPartitions(istructs.AppQName_test1_app1, []istructs.PartitionID{1})
 

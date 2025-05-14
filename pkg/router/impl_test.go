@@ -24,6 +24,7 @@ import (
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/bus"
 	"github.com/voedger/voedger/pkg/coreutils"
+	"github.com/voedger/voedger/pkg/goutils/testingu"
 	"github.com/voedger/voedger/pkg/istructs"
 	"github.com/voedger/voedger/pkg/pipeline"
 )
@@ -90,7 +91,7 @@ func TestBasicUsage_ApiArray(t *testing.T) {
 			}, bus.DefaultSendTimeout)
 			defer tearDown(router)
 
-			resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v2/users/test1/apps/app1/workspaces/%d/queries/test.query", router.port(), testWSID))
+			resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v2/apps/test1/app1/workspaces/%d/queries/test.query", router.port(), testWSID))
 			require.NoError(err)
 			defer resp.Body.Close()
 
@@ -132,20 +133,20 @@ func TestBasicUsage_Respond(t *testing.T) {
 		{
 			name:         "SysError",
 			obj:          coreutils.SysError{HTTPStatus: http.StatusBadRequest, QName: appdef.NewQName("sys", "errQName"), Message: "test error", Data: "more data"},
-			expectedJSON: `{"error":{"status":400,"message":"test error","qname":"sys.errQName","data":"more data"}}`,
+			expectedJSON: `{"status":400,"message":"test error","qname":"sys.errQName","data":"more data"}`,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			router := setUp(t, func(requestCtx context.Context, request bus.Request, responder bus.IResponder) {
 				go func() {
-					err := responder.Respond(bus.ResponseMeta{ContentType: coreutils.ApplicationJSON, StatusCode: http.StatusOK}, c.obj)
+					err := responder.Respond(bus.ResponseMeta{ContentType: coreutils.ContentType_ApplicationJSON, StatusCode: http.StatusOK}, c.obj)
 					require.NoError(err)
 				}()
 			}, bus.DefaultSendTimeout)
 			defer tearDown(router)
 
-			resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v2/users/test1/apps/app1/workspaces/%d/queries/test.query", router.port(), testWSID))
+			resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v2/apps/test1/app1/workspaces/%d/queries/test.query", router.port(), testWSID))
 			require.NoError(err)
 			defer resp.Body.Close()
 
@@ -157,7 +158,7 @@ func TestBasicUsage_Respond(t *testing.T) {
 func TestBeginResponseTimeout(t *testing.T) {
 	router := setUp(t, func(requestCtx context.Context, request bus.Request, responder bus.IResponder) {
 		// bump the mock time to make timeout timer fire
-		coreutils.MockTime.Add(2 * time.Millisecond)
+		testingu.MockTime.Add(2 * time.Millisecond)
 		// just do not use the responder
 	}, bus.SendTimeout(time.Millisecond))
 	defer tearDown(router)
@@ -170,7 +171,7 @@ func TestBeginResponseTimeout(t *testing.T) {
 	respBodyBytes, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, bus.ErrSendTimeoutExpired.Error(), string(respBodyBytes))
-	expectResp(t, resp, coreutils.TextPlain, http.StatusServiceUnavailable)
+	expectResp(t, resp, coreutils.ContentType_TextPlain, http.StatusServiceUnavailable)
 }
 
 type testObject struct {
@@ -226,7 +227,7 @@ func TestClientDisconnect_CtxCanceledOnElemSend(t *testing.T) {
 	}, bus.SendTimeout(5*time.Second))
 	defer tearDown(router)
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v2/users/test1/apps/app1/workspaces/%d/queries/test.query", router.port(), testWSID))
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v2/apps/test1/app1/workspaces/%d/queries/test.query", router.port(), testWSID))
 	require.NoError(err)
 
 	// ensure the first element is sent successfully
@@ -317,7 +318,7 @@ func TestClientDisconnect_FailedToWriteResponse(t *testing.T) {
 	defer tearDown(router)
 
 	// client side
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v2/users/test1/apps/app1/workspaces/%d/queries/test.query", router.port(), testWSID))
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v2/apps/test1/app1/workspaces/%d/queries/test.query", router.port(), testWSID))
 	require.NoError(err)
 
 	// ensure the first element is sent successfully
@@ -396,7 +397,8 @@ func TestAdminService(t *testing.T) {
 		if len(nonLocalhostIP) == 0 {
 			t.Skip("unable to find local non-loopback ip address")
 		}
-		_, err = net.DialTimeout("tcp", fmt.Sprintf("%s:%d", nonLocalhostIP, router.adminPort()), 1*time.Second)
+		// hostport
+		_, err = net.DialTimeout("tcp", fmt.Sprintf("%v:%d", nonLocalhostIP, router.adminPort()), 1*time.Second)
 		if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "connection refused") &&
 			!strings.Contains(err.Error(), "i/o timeout") {
 			t.Fatal(err)
@@ -416,8 +418,9 @@ type testRouter struct {
 
 func startRouter(t *testing.T, router *testRouter, rp RouterParams, sendTimeout bus.SendTimeout, requestHandler bus.RequestHandler) {
 	ctx, cancel := context.WithCancel(context.Background())
-	requestSender := bus.NewIRequestSender(coreutils.MockTime, sendTimeout, requestHandler)
-	httpSrv, acmeSrv, adminService := Provide(rp, nil, nil, nil, requestSender, map[appdef.AppQName]istructs.NumAppWorkspaces{istructs.AppQName_test1_app1: 10})
+	requestSender := bus.NewIRequestSender(testingu.MockTime, sendTimeout, requestHandler)
+	httpSrv, acmeSrv, adminService := Provide(rp, nil, nil, nil, requestSender,
+		map[appdef.AppQName]istructs.NumAppWorkspaces{istructs.AppQName_test1_app1: 10}, nil, nil)
 	require.Nil(t, acmeSrv)
 	require.NoError(t, httpSrv.Prepare(nil))
 	require.NoError(t, adminService.Prepare(nil))

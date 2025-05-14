@@ -13,6 +13,7 @@ import (
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/coreutils"
 	"github.com/voedger/voedger/pkg/coreutils/utils"
+	"github.com/voedger/voedger/pkg/goutils/timeu"
 	"github.com/voedger/voedger/pkg/istorage"
 	imetrics "github.com/voedger/voedger/pkg/metrics"
 )
@@ -22,7 +23,7 @@ type cachedAppStorage struct {
 	storage  istorage.IAppStorage
 	vvm      string
 	appQName appdef.AppQName
-	iTime    coreutils.ITime
+	iTime    timeu.ITime
 
 	/* metrics */
 	mGetSeconds                 *imetrics.MetricValue
@@ -52,7 +53,7 @@ type implCachingAppStorageProvider struct {
 	maxBytes        int
 	metrics         imetrics.IMetrics
 	vvmName         string
-	iTime           coreutils.ITime
+	iTime           timeu.ITime
 }
 
 func (asp *implCachingAppStorageProvider) Prepare(work any) error {
@@ -91,7 +92,7 @@ func newCachingAppStorage(
 	metrics imetrics.IMetrics,
 	vvm string,
 	appQName appdef.AppQName,
-	iTime coreutils.ITime,
+	iTime timeu.ITime,
 ) istorage.IAppStorage {
 	return &cachedAppStorage{
 		cache:                       fastcache.New(maxBytes),
@@ -198,12 +199,10 @@ func (s *cachedAppStorage) TTLGet(pKey []byte, cCols []byte, data *[]byte) (ok b
 		s.mTTLGetSeconds.Increase(time.Since(start).Seconds())
 	}()
 
-	var found bool
 	var key = makeKey(pKey, cCols)
 
 	*data = (*data)[0:0]
-	cachedData := make([]byte, 0)
-	cachedData, found = s.cache.HasGet(*data, key)
+	cachedData, found := s.cache.HasGet(*data, key)
 
 	if found {
 		d := coreutils.ReadWithExpiration(cachedData)

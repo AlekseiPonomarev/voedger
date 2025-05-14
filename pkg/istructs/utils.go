@@ -31,15 +31,6 @@ func NewWSID(cluster ClusterID, baseWSID WSID) WSID {
 	return WSID(cluster)<<WSIDClusterLShift + baseWSID
 }
 
-func NewRecordID(baseID RecordID) RecordID {
-	return RecordID(ClusterAsRegisterID)*RegisterFactor + baseID
-}
-
-// Used to generate IDs for CDoc/CRecord
-func NewCDocCRecordID(baseID RecordID) RecordID {
-	return RecordID(ClusterAsCRecordRegisterID)*RegisterFactor + baseID
-}
-
 //	63      62 61 60 59 58 57 ......47 ... 15 14 13 12 11 ..................... 1 0
 //
 // always 0 └─── ClusterID before ───┘     └──── ClusterID is here after >> ──────┘
@@ -58,13 +49,11 @@ func (id RecordID) IsRaw() bool {
 	return (id >= MinRawRecordID) && (id <= MaxRawRecordID)
 }
 
-func (id RecordID) BaseRecordID() RecordID {
-	return id % RegisterFactor
-}
-
 // Implements IRowReader
 type NullRowReader struct{}
 
+func (*NullRowReader) AsInt8(string) int8               { return 0 } // #3435 [~server.vsql.smallints/cmp.istructs~impl]
+func (*NullRowReader) AsInt16(string) int16             { return 0 } // #3435 [~server.vsql.smallints/cmp.istructs~impl]
 func (*NullRowReader) AsInt32(name string) int32        { return 0 }
 func (*NullRowReader) AsInt64(name string) int64        { return 0 }
 func (*NullRowReader) AsFloat32(name string) float32    { return 0 }
@@ -96,6 +85,8 @@ func (no *NullObject) SpecifiedValues(func(appdef.IField, any) bool) {}
 // Implements IRowWriter
 type NullRowWriter struct{}
 
+func (*NullRowWriter) PutInt8(string, int8)          {} // #3435 [~server.vsql.smallints/cmp.istructs~impl]
+func (*NullRowWriter) PutInt16(string, int16)        {} // #3435 [~server.vsql.smallints/cmp.istructs~impl]
 func (*NullRowWriter) PutInt32(string, int32)        {}
 func (*NullRowWriter) PutInt64(string, int64)        {}
 func (*NullRowWriter) PutFloat32(string, float32)    {}

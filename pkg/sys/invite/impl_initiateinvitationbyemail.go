@@ -10,12 +10,13 @@ import (
 
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/coreutils"
+	"github.com/voedger/voedger/pkg/goutils/timeu"
 	"github.com/voedger/voedger/pkg/istructs"
 	"github.com/voedger/voedger/pkg/istructsmem"
 	"github.com/voedger/voedger/pkg/sys"
 )
 
-func provideCmdInitiateInvitationByEMail(sr istructsmem.IStatelessResources, time coreutils.ITime) {
+func provideCmdInitiateInvitationByEMail(sr istructsmem.IStatelessResources, time timeu.ITime) {
 	sr.AddCommands(appdef.SysPackagePath, istructsmem.NewCommandFunction(
 		qNameCmdInitiateInvitationByEMail,
 		execCmdInitiateInvitationByEMail(time),
@@ -23,7 +24,7 @@ func provideCmdInitiateInvitationByEMail(sr istructsmem.IStatelessResources, tim
 }
 
 // called in the workspace that we're inviting to.
-func execCmdInitiateInvitationByEMail(tm coreutils.ITime) func(args istructs.ExecCommandArgs) (err error) {
+func execCmdInitiateInvitationByEMail(tm timeu.ITime) func(args istructs.ExecCommandArgs) (err error) {
 	return func(args istructs.ExecCommandArgs) (err error) {
 		if !coreutils.IsValidEmailTemplate(args.ArgumentObject.AsString(field_EmailTemplate)) {
 			return coreutils.NewHTTPError(http.StatusBadRequest, errInviteTemplateInvalid)
@@ -33,6 +34,10 @@ func execCmdInitiateInvitationByEMail(tm coreutils.ITime) func(args istructs.Exe
 		subjectExists, actualLogin, existingSubjectID, err := SubjectExistByBothLogins(login, args.State) // for backward compatibility
 		if err != nil {
 			return
+		}
+
+		if err := coreutils.ValidateEMail(login); err != nil {
+			return err
 		}
 
 		skbViewInviteIndex, err := args.State.KeyBuilder(sys.Storage_View, qNameViewInviteIndex)

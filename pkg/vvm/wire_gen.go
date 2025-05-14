@@ -21,6 +21,7 @@ import (
 	"github.com/voedger/voedger/pkg/coreutils/federation"
 	"github.com/voedger/voedger/pkg/extensionpoints"
 	"github.com/voedger/voedger/pkg/goutils/logger"
+	"github.com/voedger/voedger/pkg/goutils/timeu"
 	"github.com/voedger/voedger/pkg/iauthnz"
 	"github.com/voedger/voedger/pkg/iauthnzimpl"
 	"github.com/voedger/voedger/pkg/iblobstorage"
@@ -33,6 +34,7 @@ import (
 	"github.com/voedger/voedger/pkg/irates"
 	"github.com/voedger/voedger/pkg/iratesce"
 	"github.com/voedger/voedger/pkg/isecrets"
+	"github.com/voedger/voedger/pkg/isequencer"
 	"github.com/voedger/voedger/pkg/istorage"
 	"github.com/voedger/voedger/pkg/istorage/provider"
 	"github.com/voedger/voedger/pkg/istoragecache"
@@ -98,7 +100,8 @@ func wireVVM(vvmCtx context.Context, vvmConfig *VVMConfig) (*VVM, func(), error)
 	}
 	iAppStorageUncachingProviderFactory := provideIAppStorageUncachingProviderFactory(iAppStorageFactory, vvmConfig)
 	iAppStorageProvider := provideCachingAppStorageProvider(storageCacheSizeType, iMetrics, vvmName, iAppStorageUncachingProviderFactory, iTime)
-	iAppStructsProvider := provideIAppStructsProvider(appConfigsTypeEmpty, bucketsFactoryType, iAppTokensFactory, iAppStorageProvider)
+	sequencesTrustLevel := vvmConfig.SequencesTrustLevel
+	iAppStructsProvider := provideIAppStructsProvider(appConfigsTypeEmpty, bucketsFactoryType, iAppTokensFactory, iAppStorageProvider, sequencesTrustLevel)
 	syncActualizerFactory := actualizers.ProvideSyncActualizerFactory()
 	quotas := provideN10NQuotas(vvmConfig)
 	in10nBroker, cleanup := in10nmem.ProvideEx2(quotas, iTime)
@@ -164,7 +167,8 @@ func wireVVM(vvmCtx context.Context, vvmConfig *VVMConfig) (*VVM, func(), error)
 	operatorQueryProcessors_V1 := provideQueryProcessors_V1(numQueryProcessors, queryChannel_V1, iAppPartitions, queryprocessorServiceFactory, iMetrics, vvmName, maxPrepareQueriesType, iAuthenticator, iTokens, iFederation, iStatelessResources, iSecretReader)
 	queryChannel_V2 := provideQueryChannel_V2(serviceChannelFactory)
 	query2ServiceFactory := query2.ProvideServiceFactory()
-	operatorQueryProcessors_V2 := provideQueryProcessors_V2(numQueryProcessors, queryChannel_V2, iAppPartitions, query2ServiceFactory, iMetrics, vvmName, maxPrepareQueriesType, iAuthenticator, iTokens, iFederation, iStatelessResources, iSecretReader)
+	iFederationForQP := federation.NewForQP(iFederation)
+	operatorQueryProcessors_V2 := provideQueryProcessors_V2(numQueryProcessors, queryChannel_V2, iAppPartitions, query2ServiceFactory, iMetrics, vvmName, maxPrepareQueriesType, iAuthenticator, iTokens, iFederationForQP, iFederation, iStatelessResources, iSecretReader)
 	numBLOBProcessors := vvmConfig.NumBLOBProcessors
 	blobServiceChannel := provideBLOBChannel(serviceChannelFactory)
 	blobAppStoragePtr := provideBlobAppStoragePtr(iAppStorageProvider)
@@ -195,7 +199,7 @@ func wireVVM(vvmCtx context.Context, vvmConfig *VVMConfig) (*VVM, func(), error)
 	sendTimeout := vvmConfig.SendTimeout
 	blobServiceChannelGroupIdx := provideProcessorChannelGroupIdxBLOB(vvmConfig)
 	iRequestHandler := blobprocessor.NewIRequestHandler(iProcBus, blobServiceChannelGroupIdx)
-	cache := dbcertcache.ProvideDbCache(routerAppStoragePtr)
+	cache := dbcertcache.ProvideDBCache(routerAppStoragePtr)
 	commandProcessorsChannelGroupIdxType := provideProcessorChannelGroupIdxCommand(vvmConfig)
 	queryProcessorsChannelGroupIdxType_V1 := provideProcessorChannelGroupIdxQuery_V1(vvmConfig)
 	queryProcessorsChannelGroupIdxType_V2 := provideProcessorChannelGroupIdxQuery_V2(vvmConfig)
@@ -210,7 +214,7 @@ func wireVVM(vvmCtx context.Context, vvmConfig *VVMConfig) (*VVM, func(), error)
 		cleanup()
 		return nil, nil, err
 	}
-	routerServices := provideRouterServices(routerParams, sendTimeout, in10nBroker, iRequestHandler, quotas, wLimiterFactory, blobStorage, cache, iRequestSender, vvmPortSource, v8)
+	routerServices := provideRouterServices(routerParams, sendTimeout, in10nBroker, iRequestHandler, quotas, wLimiterFactory, blobStorage, cache, iRequestSender, vvmPortSource, v8, iTokens, iFederation)
 	adminEndpointServiceOperator := provideAdminEndpointServiceOperator(routerServices)
 	metricsServicePort := vvmConfig.MetricsServicePort
 	metricsService := metrics.ProvideMetricsService(vvmCtx, metricsServicePort, iMetrics)
@@ -326,7 +330,7 @@ func provideSchedulerRunner(cfg schedulers.BasicSchedulerConfig) appparts.ISched
 	return schedulers.ProvideSchedulers(cfg)
 }
 
-func provideBootstrapOperator(federation2 federation.IFederation, asp istructs.IAppStructsProvider, time coreutils.ITime, apppar appparts.IAppPartitions,
+func provideBootstrapOperator(federation2 federation.IFederation, asp istructs.IAppStructsProvider, time timeu.ITime, apppar appparts.IAppPartitions,
 	builtinApps []appparts.BuiltInApp, sidecarApps []appparts.SidecarApp, itokens2 itokens.ITokens, storageProvider istorage.IAppStorageProvider, blobberAppStoragePtr iblobstoragestg.BlobAppStoragePtr,
 	routerAppStoragePtr dbcertcache.RouterAppStoragePtr) (BootstrapOperator, error) {
 	var clusterBuiltinApp btstrp.ClusterBuiltInApp
@@ -364,8 +368,8 @@ func provideAppConfigsTypeEmpty() AppConfigsTypeEmpty {
 // The same approach does not work for IAppPartitions implementation, because the appparts.NewWithActualizerWithExtEnginesFactories() accepts
 // iextengine.ExtensionEngineFactories that must be initialized with the already filled AppConfigsType
 func provideIAppStructsProvider(cfgs AppConfigsTypeEmpty, bucketsFactory irates.BucketsFactoryType, appTokensFactory payloads.IAppTokensFactory,
-	storageProvider istorage.IAppStorageProvider) istructs.IAppStructsProvider {
-	return istructsmem.Provide(istructsmem.AppConfigsType(cfgs), bucketsFactory, appTokensFactory, storageProvider)
+	storageProvider istorage.IAppStorageProvider, seqTrustLevel isequencer.SequencesTrustLevel) istructs.IAppStructsProvider {
+	return istructsmem.Provide(istructsmem.AppConfigsType(cfgs), bucketsFactory, appTokensFactory, storageProvider, seqTrustLevel)
 }
 
 func provideBasicAsyncActualizerConfig(
@@ -410,7 +414,7 @@ func provideStatelessResources(cfgs AppConfigsTypeEmpty, vvmCfg *VVMConfig, appE
 	buildInfo *debug.BuildInfo, sp istorage.IAppStorageProvider, itokens2 itokens.ITokens, federation2 federation.IFederation,
 	asp istructs.IAppStructsProvider, atf payloads.IAppTokensFactory) istructsmem.IStatelessResources {
 	ssr := istructsmem.NewStatelessResources()
-	sysprovide.ProvideStateless(ssr, vvmCfg.SmtpConfig, appEPs, buildInfo, sp, vvmCfg.WSPostInitFunc, vvmCfg.Time, itokens2, federation2, asp, atf)
+	sysprovide.ProvideStateless(ssr, vvmCfg.SMTPConfig, appEPs, buildInfo, sp, vvmCfg.WSPostInitFunc, vvmCfg.Time, itokens2, federation2, asp, atf)
 	return ssr
 }
 
@@ -522,7 +526,7 @@ func provideSubjectGetterFunc() iauthnzimpl.SubjectGetterFunc {
 	}
 }
 
-func provideBucketsFactory(time coreutils.ITime) irates.BucketsFactoryType {
+func provideBucketsFactory(time timeu.ITime) irates.BucketsFactoryType {
 	return func() irates.IBuckets {
 		return iratesce.Provide(time)
 	}
@@ -774,7 +778,7 @@ func provideChannelGroups(cfg *VVMConfig) (res []iprocbusmem.ChannelGroup) {
 }
 
 func provideCachingAppStorageProvider(storageCacheSize StorageCacheSizeType, metrics2 imetrics.IMetrics,
-	vvmName processors.VVMName, uncachingProvider IAppStorageUncachingProviderFactory, iTime coreutils.ITime) istorage.IAppStorageProvider {
+	vvmName processors.VVMName, uncachingProvider IAppStorageUncachingProviderFactory, iTime timeu.ITime) istorage.IAppStorageProvider {
 	aspNonCaching := uncachingProvider()
 	return istoragecache.Provide(int(storageCacheSize), aspNonCaching, metrics2, string(vvmName), iTime)
 }
@@ -783,7 +787,7 @@ func provideBlobAppStoragePtr(astp istorage.IAppStorageProvider) iblobstoragestg
 	return new(istorage.IAppStorage)
 }
 
-func provideBlobStorage(bas iblobstoragestg.BlobAppStoragePtr, time coreutils.ITime) BlobStorage {
+func provideBlobStorage(bas iblobstoragestg.BlobAppStoragePtr, time timeu.ITime) BlobStorage {
 	return iblobstoragestg.Provide(bas, time)
 }
 
@@ -794,8 +798,11 @@ func provideRouterAppStoragePtr(astp istorage.IAppStorageProvider) dbcertcache.R
 // port 80 -> [0] is http server, port 443 -> [0] is https server, [1] is acme server
 func provideRouterServices(rp router.RouterParams, sendTimeout bus.SendTimeout, broker in10n.IN10nBroker, blobRequestHandler blobprocessor.IRequestHandler, quotas in10n.Quotas,
 	wLimiterFactory blobprocessor.WLimiterFactory, blobStorage BlobStorage,
-	autocertCache autocert.Cache, requestSender bus.IRequestSender, vvmPortSource *VVMPortSource, numsAppsWorkspaces map[appdef.AppQName]istructs.NumAppWorkspaces) RouterServices {
-	httpSrv, acmeSrv, adminSrv := router.Provide(rp, broker, blobRequestHandler, autocertCache, requestSender, numsAppsWorkspaces)
+	autocertCache autocert.Cache, requestSender bus.IRequestSender, vvmPortSource *VVMPortSource,
+	numsAppsWorkspaces map[appdef.AppQName]istructs.NumAppWorkspaces, iTokens itokens.ITokens, federation2 federation.IFederation,
+) RouterServices {
+	httpSrv, acmeSrv, adminSrv := router.Provide(rp, broker, blobRequestHandler, autocertCache, requestSender, numsAppsWorkspaces,
+		iTokens, federation2)
 	vvmPortSource.getter = func() VVMPortType {
 		return VVMPortType(httpSrv.GetPort())
 	}
@@ -861,10 +868,10 @@ func provideQueryProcessors_V1(qpCount istructs.NumQueryProcessors, qc QueryChan
 
 func provideQueryProcessors_V2(qpCount istructs.NumQueryProcessors, qc QueryChannel_V2, appParts appparts.IAppPartitions, qpFactory query2.ServiceFactory, imetrics2 imetrics.IMetrics,
 	vvm processors.VVMName, mpq MaxPrepareQueriesType, authn iauthnz.IAuthenticator,
-	tokens itokens.ITokens, federation2 federation.IFederation, statelessResources istructsmem.IStatelessResources, secretReader isecrets.ISecretReader) OperatorQueryProcessors_V2 {
+	tokens itokens.ITokens, federation2 federation.IFederationForQP, federationForState federation.IFederation, statelessResources istructsmem.IStatelessResources, secretReader isecrets.ISecretReader) OperatorQueryProcessors_V2 {
 	forks := make([]pipeline.ForkOperatorOptionFunc, qpCount)
 	for i := 0; i < int(qpCount); i++ {
-		forks[i] = pipeline.ForkBranch(pipeline.ServiceOperator(qpFactory(iprocbus.ServiceChannel(qc), appParts, int(mpq), imetrics2, string(vvm), authn, tokens, federation2, statelessResources, secretReader)))
+		forks[i] = pipeline.ForkBranch(pipeline.ServiceOperator(qpFactory(iprocbus.ServiceChannel(qc), appParts, int(mpq), imetrics2, string(vvm), authn, tokens, federation2, federationForState, statelessResources, secretReader)))
 	}
 	return pipeline.ForkOperator(pipeline.ForkSame, forks[0], forks[1:]...)
 }

@@ -35,6 +35,9 @@ type ClusterAppID = uint32
 
 type SubjectKindType int32 // not uint8 because it is written to int32 fields, so int32 is better to avoid data loss
 
+// Identifier for QNames
+type QNameID = uint16
+
 const (
 	SubjectKind_null SubjectKindType = iota
 	SubjectKind_User
@@ -45,6 +48,8 @@ const (
 // panics if name does not exist in type
 // If field is nil zero value is returned
 type IRowReader interface {
+	AsInt8(appdef.FieldName) int8   // #3435 [~server.vsql.smallints/cmp.istructs~impl]
+	AsInt16(appdef.FieldName) int16 // #3435 [~server.vsql.smallints/cmp.istructs~impl]
 	AsInt32(appdef.FieldName) int32
 	AsInt64(appdef.FieldName) int64
 	AsFloat32(appdef.FieldName) float32
@@ -69,7 +74,8 @@ type IRowReader interface {
 type IRowWriter interface {
 
 	// The following functions panics if name has different type then value
-
+	PutInt8(appdef.FieldName, int8)   // #3435 [~server.vsql.smallints/cmp.istructs~impl]
+	PutInt16(appdef.FieldName, int16) // #3435 [~server.vsql.smallints/cmp.istructs~impl]
 	PutInt32(appdef.FieldName, int32)
 	PutInt64(appdef.FieldName, int64)
 	PutFloat32(appdef.FieldName, float32)

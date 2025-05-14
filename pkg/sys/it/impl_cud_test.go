@@ -443,7 +443,7 @@ func TestEraseString(t *testing.T) {
 	body = fmt.Sprintf(`{"args":{"Schema":"app1pkg.air_table_plan"},"elements":[{"fields": ["name","sys.ID"]}],"filters":[{"expr":"eq","args":{"field":"sys.ID","value":%d}}]}`, idAnyAirTablePlan)
 	resp := vit.PostWS(ws, "q.sys.Collection", body)
 
-	require.Equal(t, "", resp.SectionRow()[0].(string))
+	require.Empty(t, resp.SectionRow()[0].(string))
 }
 
 func TestEraseString1(t *testing.T) {
@@ -460,7 +460,7 @@ func TestEraseString1(t *testing.T) {
 	body = fmt.Sprintf(`{"args":{"Schema":"app1pkg.articles"},"elements":[{"fields": ["name","sys.ID"]}],"filters":[{"expr":"eq","args":{"field":"sys.ID","value":%d}}]}`, id)
 	resp := vit.PostWS(ws, "q.sys.Collection", body)
 
-	require.Equal(t, "", resp.SectionRow()[0].(string))
+	require.Empty(t, resp.SectionRow()[0].(string))
 }
 
 func TestDenyCreateNonRawIDs(t *testing.T) {
@@ -483,7 +483,7 @@ func TestSelectFromNestedTables(t *testing.T) {
 		{"fields":{"sys.ID": 2,"sys.QName": "app1pkg.Nested", "sys.ParentID":1,"sys.Container": "Nested","FldNested":3}},
 		{"fields":{"sys.ID": 3,"sys.QName": "app1pkg.Third", "Fld1": 42,"sys.ParentID":2,"sys.Container": "Third"}}
 	]}`
-	vit.PostWS(ws, "c.sys.CUD", body).NewID()
+	vit.PostWS(ws, "c.sys.CUD", body)
 
 	t.Run("normal select", func(t *testing.T) {
 		body = `{"args":{"Schema":"app1pkg.Root"},"elements": [
@@ -493,9 +493,10 @@ func TestSelectFromNestedTables(t *testing.T) {
 		]}`
 		resp := vit.PostWS(ws, "q.sys.Collection", body)
 
-		require.EqualValues(2, resp.Sections[0].Elements[0][0][0][0])
-		require.EqualValues(3, resp.Sections[0].Elements[0][1][0][0])
-		require.EqualValues(42, resp.Sections[0].Elements[0][2][0][0])
+		actualRow := resp.Sections[0].Elements[len(resp.Sections[0].Elements)-1]
+		require.EqualValues(2, actualRow[0][0][0])
+		require.EqualValues(3, actualRow[1][0][0])
+		require.EqualValues(42, actualRow[2][0][0])
 	})
 
 	t.Run("unknown nested table", func(t *testing.T) {
@@ -575,7 +576,7 @@ func TestFieldsAuthorization_OpForbidden(t *testing.T) {
 		id := vit.PostWS(ws, "c.sys.CUD", body).NewID()
 
 		body = fmt.Sprintf(`{"cuds": [{"sys.ID":%d,"fields": {"sys.IsActive":true}}]}`, id)
-		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] ACTIVATE", "operation forbidden"))
+		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] OperationKind_Activate", "operation forbidden"))
 	})
 
 	t.Run("deactivate", func(t *testing.T) {
@@ -583,7 +584,7 @@ func TestFieldsAuthorization_OpForbidden(t *testing.T) {
 		id := vit.PostWS(ws, "c.sys.CUD", body).NewID()
 
 		body = fmt.Sprintf(`{"cuds": [{"sys.ID":%d,"fields": {"sys.IsActive":false}}]}`, id)
-		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] DEACTIVATE", "operation forbidden"))
+		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] OperationKind_Deactivate", "operation forbidden"))
 	})
 
 	t.Run("field insert", func(t *testing.T) {
@@ -593,7 +594,7 @@ func TestFieldsAuthorization_OpForbidden(t *testing.T) {
 
 		// denied
 		body = `{"cuds": [{"fields": {"sys.ID": 1,"sys.QName": "app1pkg.DocFieldInsertDenied","FldDenied":42}}]}`
-		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] INSERT", "operation forbidden"))
+		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] OperationKind_Insert", "operation forbidden"))
 	})
 
 	t.Run("field update", func(t *testing.T) {
@@ -606,7 +607,7 @@ func TestFieldsAuthorization_OpForbidden(t *testing.T) {
 
 		// denied
 		body = fmt.Sprintf(`{"cuds": [{"sys.ID":%d,"fields": {"FldDenied":46}}]}`, id)
-		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] UPDATE", "operation forbidden"))
+		vit.PostWS(ws, "c.sys.CUD", body, coreutils.Expect403("cuds[0] OperationKind_Update", "operation forbidden"))
 	})
 
 	// note: select authorization is tested in [TestDeniedResourcesAuthorization]

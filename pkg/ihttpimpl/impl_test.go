@@ -30,6 +30,7 @@ import (
 	voedger "github.com/voedger/voedger/cmd/voedger/voedgerimpl"
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/coreutils"
+	"github.com/voedger/voedger/pkg/goutils/testingu"
 	"github.com/voedger/voedger/pkg/ihttp"
 	"github.com/voedger/voedger/pkg/ihttpctl"
 	"github.com/voedger/voedger/pkg/istorage/mem"
@@ -146,7 +147,7 @@ func TestBasicUsage_HTTPProcessor(t *testing.T) {
 		resource := "q.EchoQuery"
 		path := fmt.Sprintf("%s/%s/%d/%s", appOwner, appName, wsid, resource)
 
-		body := testApp.post("/api/"+path, coreutils.ApplicationJSON, testText, nil)
+		body := testApp.post("/api/"+path, coreutils.ContentType_ApplicationJSON, testText, nil)
 		require.Equal(fmt.Sprintf(`{"sections":[{"type":"","elements":["Hello, %s, {}"]}]}`, testText), string(body))
 	})
 
@@ -379,7 +380,7 @@ func setUp(t *testing.T) *testApp {
 	params := ihttp.CLIParams{
 		Port: 0, // listen using some free port, port value will be taken using API
 	}
-	appStorageProvider := istorageimpl.Provide(mem.Provide(coreutils.MockTime))
+	appStorageProvider := istorageimpl.Provide(mem.Provide(testingu.MockTime))
 	routerStorage, err := ihttp.NewIRouterStorage(appStorageProvider)
 	require.NoError(err)
 	processor, pCleanup := NewProcessor(params, routerStorage)

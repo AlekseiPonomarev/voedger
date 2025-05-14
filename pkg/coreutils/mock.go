@@ -9,6 +9,7 @@
 package coreutils
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/stretchr/testify/mock"
@@ -20,6 +21,8 @@ type MockCUDRow struct {
 	mock.Mock
 }
 
+func (m *MockCUDRow) AsInt8(name appdef.FieldName) int8       { return m.Called(name).Get(0).(int8) }
+func (m *MockCUDRow) AsInt16(name appdef.FieldName) int16     { return m.Called(name).Get(0).(int16) }
 func (m *MockCUDRow) AsInt32(name appdef.FieldName) int32     { return m.Called(name).Get(0).(int32) }
 func (m *MockCUDRow) AsInt64(name appdef.FieldName) int64     { return m.Called(name).Get(0).(int64) }
 func (m *MockCUDRow) AsFloat32(name appdef.FieldName) float32 { return m.Called(name).Get(0).(float32) }
@@ -46,7 +49,20 @@ func (m *MockCUDRow) RecordIDs(includeNulls bool) func(func(appdef.FieldName, is
 	return m.Called(includeNulls).Get(0).(func(func(appdef.FieldName, istructs.RecordID) bool))
 }
 
+type MockEvents struct {
+	istructs.IEvents
+	mock.Mock
+}
+
+func (e *MockEvents) ReadPLog(ctx context.Context, partition istructs.PartitionID, offset istructs.Offset, toReadCount int, cb istructs.PLogEventsReaderCallback) (err error) {
+	return e.Called(ctx, partition, offset, toReadCount, cb).Error(0)
+}
+func (e *MockEvents) ReadWLog(ctx context.Context, workspace istructs.WSID, offset istructs.Offset, toReadCount int, cb istructs.WLogEventsReaderCallback) (err error) {
+	return e.Called(ctx, workspace, offset, toReadCount, cb).Error(0)
+}
+
 type MockPLogEvent struct {
+	istructs.IPLogEvent
 	mock.Mock
 }
 
@@ -75,6 +91,8 @@ type MockObject struct {
 	mock.Mock
 }
 
+func (m *MockObject) AsInt8(name appdef.FieldName) int8       { return m.Called(name).Get(0).(int8) }
+func (m *MockObject) AsInt16(name appdef.FieldName) int16     { return m.Called(name).Get(0).(int16) }
 func (m *MockObject) AsInt32(name appdef.FieldName) int32     { return m.Called(name).Get(0).(int32) }
 func (m *MockObject) AsInt64(name appdef.FieldName) int64     { return m.Called(name).Get(0).(int64) }
 func (m *MockObject) AsFloat32(name appdef.FieldName) float32 { return m.Called(name).Get(0).(float32) }
@@ -171,6 +189,12 @@ type MockStateKeyBuilder struct {
 	mock.Mock
 }
 
+func (m *MockStateKeyBuilder) PutInt8(name appdef.FieldName, value int8) {
+	m.Called(name, value)
+}
+func (m *MockStateKeyBuilder) PutInt16(name appdef.FieldName, value int16) {
+	m.Called(name, value)
+}
 func (m *MockStateKeyBuilder) PutInt32(name appdef.FieldName, value int32) {
 	m.Called(name, value)
 }
@@ -236,6 +260,8 @@ type MockStateValue struct {
 	mock.Mock
 }
 
+func (m *MockStateValue) AsInt8(name appdef.FieldName) int8   { return m.Called(name).Get(0).(int8) }
+func (m *MockStateValue) AsInt16(name appdef.FieldName) int16 { return m.Called(name).Get(0).(int16) }
 func (m *MockStateValue) AsInt32(name appdef.FieldName) int32 { return m.Called(name).Get(0).(int32) }
 func (m *MockStateValue) AsInt64(name appdef.FieldName) int64 { return m.Called(name).Get(0).(int64) }
 func (m *MockStateValue) AsFloat32(name appdef.FieldName) float32 {
@@ -290,6 +316,12 @@ type MockStateValueBuilder struct {
 
 func (m *MockStateValueBuilder) Equal(src istructs.IStateValueBuilder) bool {
 	return true
+}
+func (m *MockStateValueBuilder) PutInt8(name appdef.FieldName, value int8) {
+	m.Called(name, value)
+}
+func (m *MockStateValueBuilder) PutInt16(name appdef.FieldName, value int16) {
+	m.Called(name, value)
 }
 func (m *MockStateValueBuilder) PutInt32(name appdef.FieldName, value int32) {
 	m.Called(name, value)
@@ -375,6 +407,8 @@ type MockKey struct {
 	mock.Mock
 }
 
+func (m *MockKey) AsInt8(name appdef.FieldName) int8       { return m.Called(name).Get(0).(int8) }
+func (m *MockKey) AsInt16(name appdef.FieldName) int16     { return m.Called(name).Get(0).(int16) }
 func (m *MockKey) AsInt32(name appdef.FieldName) int32     { return m.Called(name).Get(0).(int32) }
 func (m *MockKey) AsInt64(name appdef.FieldName) int64     { return m.Called(name).Get(0).(int64) }
 func (m *MockKey) AsFloat32(name appdef.FieldName) float32 { return m.Called(name).Get(0).(float32) }

@@ -6,6 +6,7 @@
 package router
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -21,6 +22,22 @@ func WriteTextResponse(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set(coreutils.ContentType, "text/plain")
 	w.WriteHeader(code)
 	writeResponse(w, msg)
+}
+
+func ReplyCommonError(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set(coreutils.ContentType, coreutils.ContentType_ApplicationJSON)
+	w.WriteHeader(code)
+	writeCommonError(w, msg, code)
+}
+
+func ReplyJSON(w http.ResponseWriter, data string, code int) {
+	w.Header().Set(coreutils.ContentType, coreutils.ContentType_ApplicationJSON)
+	w.WriteHeader(code)
+	writeResponse(w, data)
+}
+
+func writeCommonError(w http.ResponseWriter, msg string, code int) bool {
+	return writeResponse(w, fmt.Sprintf(`{"status":%d,"message":%q}`, code, msg))
 }
 
 func writeResponse(w http.ResponseWriter, data string) bool {

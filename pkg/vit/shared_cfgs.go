@@ -56,6 +56,9 @@ const (
 	Field_Withdraw     = "Withdraw"
 	Field_Deposit      = "Deposit"
 	Field_Capabilities = "Capabilities"
+	Field_Cfg          = "Cfg"
+	Field_GroupA       = "GroupA"
+	Field_GroupB       = "GroupB"
 )
 
 var (
@@ -74,6 +77,9 @@ var (
 	QNameApp1_CDocDaily                      = appdef.NewQName(app1PkgName, "Daily")
 	QNameApp1_CDocCurrency                   = appdef.NewQName(app1PkgName, "Currency")
 	QNameApp1_CDocCountry                    = appdef.NewQName(app1PkgName, "Country")
+	QNameApp1_CDocCfg                        = appdef.NewQName(app1PkgName, "Cfg")
+	QNameApp1_CDocBatch                      = appdef.NewQName(app1PkgName, "Batch")
+	QNameApp1_CRecordTask                    = appdef.NewQName(app1PkgName, "Task")
 	QNameApp1_WDocClient                     = appdef.NewQName(app1PkgName, "Client")
 	QNameApp1_WDocWallet                     = appdef.NewQName(app1PkgName, "Wallet")
 	QNameApp1_WDocCapabilities               = appdef.NewQName(app1PkgName, "Capabilities")
@@ -99,6 +105,7 @@ var (
 					WithSubject(TestEmail, istructs.SubjectKind_User, []appdef.QName{iauthnz.QNameRoleWorkspaceOwner}))),
 			WithChildWorkspace(QNameApp1_TestWSKind_another, "test_ws_another", "", "", "login", map[string]interface{}{}),
 			WithChildWorkspace(QNameApp1_TestWSKind, "test_ws_qp2", "test_template", "", "login", map[string]interface{}{"IntFld": 42}),
+			WithChildWorkspace(QNameApp1_TestWSKind, "test_ws3", "test_template", "", "login", map[string]interface{}{"IntFld": 42}),
 		),
 		WithApp(istructs.AppQName_test1_app2, ProvideApp2, WithUserLogin("login", "1")),
 		WithVVMConfig(func(cfg *vvm.VVMConfig) {
@@ -111,7 +118,7 @@ var (
 			const app1_BLOBMaxSize = 5
 			cfg.BLOBMaxSize = app1_BLOBMaxSize
 
-			cfg.SmtpConfig = TestSMTPCfg
+			cfg.SMTPConfig = TestSMTPCfg
 		}),
 		WithCleanup(func(_ *VIT) {
 			MockCmdExec = func(input string, args istructs.ExecCommandArgs) error { panic("") }
@@ -414,6 +421,8 @@ func ProvideApp1(apis builtinapps.APIs, cfg *istructsmem.AppConfigType, ep exten
 			})
 		})
 	}))
+
+	cfg.Resources.Add(istructsmem.NewQueryFunction(appdef.NewQName(app1PkgName, "QryVoid"), istructsmem.NullQueryExec))
 
 	app1PackageFS := parser.PackageFS{
 		Path: App1PkgPath,

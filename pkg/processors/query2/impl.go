@@ -16,6 +16,7 @@ import (
 	"github.com/voedger/voedger/pkg/bus"
 	"github.com/voedger/voedger/pkg/coreutils"
 	"github.com/voedger/voedger/pkg/coreutils/federation"
+	"github.com/voedger/voedger/pkg/goutils/logger"
 	"github.com/voedger/voedger/pkg/iauthnz"
 	"github.com/voedger/voedger/pkg/iprocbus"
 	"github.com/voedger/voedger/pkg/isecrets"
@@ -33,7 +34,8 @@ import (
 
 func implServiceFactory(serviceChannel iprocbus.ServiceChannel,
 	appParts appparts.IAppPartitions, maxPrepareQueries int, metrics imetrics.IMetrics, vvm string,
-	authn iauthnz.IAuthenticator, itokens itokens.ITokens, federation federation.IFederation,
+	authn iauthnz.IAuthenticator, itokens itokens.ITokens, federationForQP federation.IFederationForQP,
+	federationForState federation.IFederation,
 	statelessResources istructsmem.IStatelessResources, secretReader isecrets.ISecretReader) pipeline.IService {
 	return pipeline.NewService(func(ctx context.Context) {
 		var p pipeline.ISyncPipeline
@@ -48,11 +50,11 @@ func implServiceFactory(serviceChannel iprocbus.ServiceChannel,
 					metrics: metrics,
 				}
 				qpm.Increase(queryprocessor.Metric_QueriesTotal, 1.0)
-				qwork := newQueryWork(msg, appParts, maxPrepareQueries, qpm, secretReader)
+				qwork := newQueryWork(msg, appParts, maxPrepareQueries, qpm, secretReader, federationForQP)
 				func() { // borrowed application partition should be guaranteed to be freed
 					defer qwork.Release()
 					if p == nil {
-						p = newQueryProcessorPipeline(ctx, authn, itokens, federation, statelessResources)
+						p = newQueryProcessorPipeline(ctx, authn, itokens, federationForState, statelessResources)
 					}
 					err := p.SendSync(qwork)
 					if err != nil {
@@ -60,7 +62,12 @@ func implServiceFactory(serviceChannel iprocbus.ServiceChannel,
 						p.Close()
 						p = nil
 					} else {
-						if err = qwork.apiPathHandler.Exec(ctx, qwork); err == nil {
+						now := time.Now()
+						if qwork.apiPathHandler.exec != nil {
+							err = qwork.apiPathHandler.exec(ctx, qwork)
+						}
+						qwork.metrics.Increase(queryprocessor.Metric_ExecSeconds, time.Since(now).Seconds())
+						if err == nil {
 							if err = processors.CheckResponseIntent(qwork.state); err == nil {
 								err = qwork.state.ApplyIntents()
 							}
@@ -83,13 +90,20 @@ func implServiceFactory(serviceChannel iprocbus.ServiceChannel,
 					if err != nil {
 						statusCode = err.(coreutils.SysError).HTTPStatus // nolint:errorlint
 					}
-					if qwork.responseWriterGetter == nil || qwork.responseWriterGetter() == nil {
-						// have an error before 200ok is sent -> send the status from the actual error
-						respWriter = msg.Responder().InitResponse(statusCode)
-					} else {
-						respWriter = qwork.responseWriterGetter()
+					if qwork.apiPathHandler.isArrayResult {
+						if qwork.responseWriterGetter == nil || qwork.responseWriterGetter() == nil {
+							// have an error before 200ok is sent -> send the status from the actual error
+							respWriter = msg.Responder().InitResponse(statusCode)
+						} else {
+							respWriter = qwork.responseWriterGetter()
+						}
+						respWriter.Close(err)
+					} else if err != nil {
+						respondErr := qwork.msg.Responder().Respond(bus.ResponseMeta{ContentType: coreutils.ContentType_ApplicationJSON, StatusCode: statusCode}, err)
+						if respondErr != nil {
+							logger.Error(fmt.Sprintf("failed to send the error %s: %s", err.Error(), respondErr.Error()))
+						}
 					}
-					respWriter.Close(err)
 				}()
 				metrics.IncreaseApp(queryprocessor.Metric_QueriesSeconds, vvm, msg.AppQName(), time.Since(now).Seconds())
 			case <-ctx.Done():
@@ -103,23 +117,44 @@ func implServiceFactory(serviceChannel iprocbus.ServiceChannel,
 
 // IStatelessResources need only for determine the exact result type of ANY
 func newQueryProcessorPipeline(requestCtx context.Context, authn iauthnz.IAuthenticator,
-	itokens itokens.ITokens, federation federation.IFederation, statelessResources istructsmem.IStatelessResources) pipeline.ISyncPipeline {
+	itokens itokens.ITokens, federationForState federation.IFederation, statelessResources istructsmem.IStatelessResources) pipeline.ISyncPipeline {
 	ops := []*pipeline.WiredOperator{
 		operator("get api path handler", func(ctx context.Context, qw *queryWork) (err error) {
-			switch qw.msg.ApiPath() {
-			case ApiPath_Queries:
-				qw.apiPathHandler = &queryHandler{}
-			case ApiPath_Views:
-				qw.apiPathHandler = &viewHandler{}
+			switch qw.msg.APIPath() {
+			case processors.APIPath_Queries:
+				qw.apiPathHandler = queryHandler()
+			case processors.APIPath_Views:
+				qw.apiPathHandler = viewHandler()
+			case processors.APIPath_Docs:
+				// [~server.apiv2.docs/cmp.provideDocsHandler~impl]
+				qw.apiPathHandler = docsHandler()
+			case processors.APIPaths_Schema:
+				qw.apiPathHandler = schemasHandler()
+			case processors.APIPath_Schemas_WorkspaceRoles:
+				qw.apiPathHandler = schemasRolesHandler()
+			case processors.APIPath_Schemas_WorkspaceRole:
+				// [~server.apiv2.role/cmp.provideSchemasRoleHandler~impl]
+				qw.apiPathHandler = schemasRoleHandler()
+			case processors.APIPath_CDocs:
+				// [~server.apiv2.docs/cmp.provideCDocsHandler~impl]
+				qw.apiPathHandler = cdocsHandler()
+			case processors.APIPath_Auth_Login:
+				// [~server.apiv2.auth/cmp.provideAuthLoginHandler~impl]
+				qw.apiPathHandler = authLoginHandler()
+			case processors.APIPath_Auth_Refresh:
+				// [~server.apiv2.auth/cmp.provideAuthRefreshHandler~impl]
+				qw.apiPathHandler = authRefreshHandler()
 			default:
-				return coreutils.NewHTTPErrorf(http.StatusBadRequest, fmt.Sprintf("unsupported api path %v", qw.msg.ApiPath()))
+				return coreutils.NewHTTPErrorf(http.StatusBadRequest, fmt.Sprintf("unsupported api path %v", qw.msg.APIPath()))
 			}
 			return nil
 		}),
-
 		operator("borrowAppPart", borrowAppPart),
 		operator("check rate limit", func(ctx context.Context, qw *queryWork) (err error) {
-			return qw.apiPathHandler.CheckRateLimit(ctx, qw)
+			if qw.apiPathHandler.checkRateLimit == nil {
+				return nil
+			}
+			return qw.apiPathHandler.checkRateLimit(ctx, qw)
 		}),
 		operator("authenticate query request", func(ctx context.Context, qw *queryWork) (err error) {
 			req := iauthnz.AuthnRequest{
@@ -162,10 +197,6 @@ func newQueryProcessorPipeline(requestCtx context.Context, authn iauthnz.IAuthen
 			return nil
 		}),
 		operator("get IWorkspace", func(ctx context.Context, qw *queryWork) (err error) {
-			if qw.wsDesc.QName() == appdef.NullQName {
-				// workspace is dummy
-				return nil
-			}
 			if qw.iWorkspace = qw.appStructs.AppDef().WorkspaceByDescriptor(qw.wsDesc.AsQName(authnz.Field_WSKind)); qw.iWorkspace == nil {
 				return coreutils.NewHTTPErrorf(http.StatusInternalServerError, fmt.Sprintf("workspace is not found in AppDef by cdoc.sys.WorkspaceDescriptor.WSKind %s",
 					qw.wsDesc.AsQName(authnz.Field_WSKind)))
@@ -173,10 +204,16 @@ func newQueryProcessorPipeline(requestCtx context.Context, authn iauthnz.IAuthen
 			return nil
 		}),
 		operator("set request type (view, query etc)", func(ctx context.Context, qw *queryWork) (err error) {
-			return qw.apiPathHandler.SetRequestType(ctx, qw)
+			if qw.apiPathHandler.setRequestType == nil {
+				return nil
+			}
+			return qw.apiPathHandler.setRequestType(ctx, qw)
 		}),
 		operator("authorize query request", func(ctx context.Context, qw *queryWork) (err error) {
-			ok, err := qw.appPart.IsOperationAllowed(qw.iWorkspace, qw.apiPathHandler.RequestOpKind(), qw.msg.QName(), nil, qw.roles)
+			if qw.apiPathHandler.requestOpKind == appdef.OperationKind_null {
+				return nil
+			}
+			ok, err := qw.appPart.IsOperationAllowed(qw.iWorkspace, qw.apiPathHandler.requestOpKind, qw.msg.QName(), nil, qw.roles)
 			if err != nil {
 				return err
 			}
@@ -186,7 +223,7 @@ func newQueryProcessorPipeline(requestCtx context.Context, authn iauthnz.IAuthen
 			return nil
 		}),
 		operator("validate: get exec query args", func(ctx context.Context, qw *queryWork) (err error) {
-			if qw.msg.ApiPath() == ApiPath_Queries {
+			if qw.msg.APIPath() == processors.APIPath_Queries {
 				qw.execQueryArgs, err = newExecQueryArgs(qw.msg.WSID(), qw)
 			}
 			return coreutils.WrapSysError(err, http.StatusBadRequest)
@@ -220,7 +257,7 @@ func newQueryProcessorPipeline(requestCtx context.Context, authn iauthnz.IAuthen
 				func() istructs.IObjectBuilder {
 					return qw.appStructs.ObjectBuilder(qw.resultType.QName())
 				},
-				federation,
+				federationForState,
 				func() istructs.ExecQueryCallback {
 					return qw.callbackFunc
 				},
@@ -230,17 +267,26 @@ func newQueryProcessorPipeline(requestCtx context.Context, authn iauthnz.IAuthen
 			return
 		}),
 		operator("validate: get result type", func(ctx context.Context, qw *queryWork) (err error) {
-			return qw.apiPathHandler.SetResultType(ctx, qw, statelessResources)
+			if qw.apiPathHandler.setResultType == nil {
+				return nil
+			}
+			return qw.apiPathHandler.setResultType(ctx, qw, statelessResources)
 		}),
 		operator("authorize actual sys.Any result", func(ctx context.Context, qw *queryWork) (err error) {
-			return qw.apiPathHandler.AuthorizeResult(ctx, qw)
+			if qw.apiPathHandler.authorizeResult == nil {
+				return nil
+			}
+			return qw.apiPathHandler.authorizeResult(ctx, qw)
 		}),
 		operator("build rows processor", func(ctx context.Context, qw *queryWork) error {
 			now := time.Now()
 			defer func() {
 				qw.metrics.Increase(queryprocessor.Metric_BuildSeconds, time.Since(now).Seconds())
 			}()
-			return qw.apiPathHandler.RowsProcessor(ctx, qw)
+			if qw.apiPathHandler.rowsProcessor == nil {
+				return nil
+			}
+			return qw.apiPathHandler.rowsProcessor(ctx, qw)
 		}),
 	}
 	return pipeline.NewSyncPipeline(requestCtx, "Query Processor", ops[0], ops[1:]...)
@@ -251,7 +297,7 @@ func newExecQueryArgs(wsid istructs.WSID, qw *queryWork) (execQueryArgs istructs
 	requestArgs := istructs.NewNullObject()
 	if argsType != nil {
 		requestArgsBuilder := qw.appStructs.ObjectBuilder(argsType.QName())
-		requestArgsBuilder.FillFromJSON(qw.msg.QueryParams().Argument["args"].(map[string]interface{})) // TODO: test that we could cast that
+		requestArgsBuilder.FillFromJSON(qw.msg.QueryParams().Argument)
 		requestArgs, err = requestArgsBuilder.Build()
 		if err != nil {
 			return execQueryArgs, err

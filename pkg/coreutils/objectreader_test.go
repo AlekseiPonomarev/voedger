@@ -59,7 +59,7 @@ func TestToMap_Basic(t *testing.T) {
 	require := require.New(t)
 	obj := &TestObject{
 		Name: testQName,
-		Id:   42,
+		ID_:  42,
 		Data: testData,
 		Containers_: map[string][]*TestObject{
 			"container": {
@@ -91,7 +91,7 @@ func TestToMap_Basic(t *testing.T) {
 	t.Run("null QName", func(t *testing.T) {
 		obj := &TestObject{
 			Name: appdef.NullQName,
-			Id:   42,
+			ID_:  42,
 			Data: map[string]interface{}{},
 		}
 		m := ObjectToMap(obj, appDef)
@@ -110,7 +110,7 @@ func TestToMap_Filter(t *testing.T) {
 	require := require.New(t)
 	obj := &TestObject{
 		Name: testQName,
-		Id:   42,
+		ID_:  42,
 		Data: testData,
 	}
 
@@ -169,7 +169,7 @@ func TestReadValue(t *testing.T) {
 	iValue := &TestValue{
 		TestObject: &TestObject{
 			Name: testQNameView,
-			Id:   42,
+			ID_:  42,
 			Data: iValueValues,
 		},
 	}
@@ -228,14 +228,7 @@ func testBasic(expectedQName appdef.QName, m map[string]interface{}, require *re
 	require.True(v)
 	require.Equal([]byte{5, 6}, m["bytes"])
 	require.Equal(istructs.RecordID(7), m["recordID"])
-	var actualQName appdef.QName
-	if _, ok := m[appdef.SystemField_QName].(string); ok {
-		var err error
-		actualQName, err = appdef.ParseQName(m[appdef.SystemField_QName].(string))
-		require.NoError(err)
-	} else {
-		actualQName = m[appdef.SystemField_QName].(appdef.QName)
-	}
+	actualQName := m[appdef.SystemField_QName].(appdef.QName)
 	require.Equal(expectedQName, actualQName)
 }
 

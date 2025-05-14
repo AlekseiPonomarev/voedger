@@ -21,7 +21,9 @@ import (
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/compile"
 	"github.com/voedger/voedger/pkg/coreutils"
+	"github.com/voedger/voedger/pkg/goutils/testingu"
 	"github.com/voedger/voedger/pkg/iratesce"
+	"github.com/voedger/voedger/pkg/isequencer"
 	"github.com/voedger/voedger/pkg/istorage/mem"
 	istorageimpl "github.com/voedger/voedger/pkg/istorage/provider"
 	"github.com/voedger/voedger/pkg/istructs"
@@ -104,7 +106,7 @@ func (gts *generalTestState) stateSingletonRecord(fQName IFullQName, keyValueLis
 		panic("use Record method for non-singleton entities")
 	}
 
-	gts.record(fQName, istructs.MinReservedBaseRecordID, isSingleton, keyValueList...)
+	gts.record(fQName, istructs.MinReservedRecordID, isSingleton, keyValueList...)
 }
 
 func (gts *generalTestState) getQNameFromFQName(fQName IFullQName) appdef.QName {
@@ -345,7 +347,7 @@ func (gts *generalTestState) putRecords() {
 		kvMap[sys.Storage_Record_Field_WSID] = gts.commandWSID
 
 		mockedObject := &coreutils.TestObject{
-			Id:          item.id,
+			ID_:         item.id,
 			Name:        item.qName,
 			IsNew_:      item.isNew,
 			Data:        kvMap,
@@ -372,7 +374,7 @@ func (gts *generalTestState) putViewRecords() {
 		kvMap[sys.Storage_Record_Field_WSID] = gts.commandWSID
 
 		mockedObject := &coreutils.TestObject{
-			Id:          item.id,
+			ID_:         item.id,
 			Name:        item.qName,
 			IsNew_:      item.isNew,
 			Data:        kvMap,
@@ -550,13 +552,14 @@ func (gts *generalTestState) buildAppDef() {
 		}
 	}
 
-	asf := mem.Provide(coreutils.MockTime)
+	asf := mem.Provide(testingu.MockTime)
 	storageProvider := istorageimpl.Provide(asf)
 	prov := istructsmem.Provide(
 		cfgs,
 		iratesce.TestBucketsFactory,
 		payloads.ProvideIAppTokensFactory(itokensjwt.TestTokensJWT()),
 		storageProvider,
+		isequencer.SequencesTrustLevel_0,
 	)
 
 	structs, err := prov.BuiltIn(istructs.AppQName_test1_app1)
@@ -731,7 +734,7 @@ func (pts *ProjectorTestState) EventCUD(fQName IFullQName, id istructs.RecordID,
 	}
 
 	pts.rawEvent.cuds = append(pts.rawEvent.cuds, &coreutils.TestObject{
-		Id:   id,
+		ID_:  id,
 		Name: appdef.NewQName(getPackageLocalName(pts.appDef, fQName), fQName.Entity()),
 		Data: keyValueMap,
 	})
@@ -842,13 +845,13 @@ func (pts *ProjectorTestState) putEvent() {
 	mockedEventObject.Data[sys.Storage_CommandContext_Field_WLogOffset] = pts.rawEvent.wLogOffset
 
 	for _, cud := range pts.rawEvent.cuds {
-		cud.Data[appdef.SystemField_ID] = cud.Id
+		cud.Data[appdef.SystemField_ID] = cud.ID_
 		mockedEventObject.Containers_[sys.Storage_Event_Field_CUDs] = append(
 			mockedEventObject.Containers_[sys.Storage_Event_Field_CUDs],
 			&coreutils.TestObject{
 				Name:        cud.Name,
 				Data:        cud.Data,
-				Id:          cud.Id,
+				ID_:         cud.ID_,
 				Parent_:     cud.Parent_,
 				Containers_: cud.Containers_,
 				IsNew_:      cud.IsNew_,
@@ -994,7 +997,7 @@ func splitKeysFromValues(entity IFullQName, m map[string]any) (mapOfKeys map[str
 }
 
 func setArgumentObject(argumentObject *coreutils.TestObject, fQName IFullQName, id istructs.RecordID, keyValueList ...any) {
-	argumentObject.Id = id
+	argumentObject.ID_ = id
 	argumentObject.Name = appdef.NewQName(fQName.PkgPath(), fQName.Entity())
 
 	keyValueMap, err := parseKeyValues(keyValueList)

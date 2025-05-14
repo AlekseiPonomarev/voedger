@@ -586,7 +586,6 @@ ALTERABLE WORKSPACE test_wsWS (
 	TABLE DocActivateDenied INHERITS sys.CDoc (
 		Fld1 int32
 	);
-
 	TABLE DocDeactivateDenied INHERITS sys.CDoc (
 		Fld1 int32
 	);
@@ -669,6 +668,24 @@ ALTERABLE WORKSPACE test_wsWS (
         PRIMARY KEY ((Year, Month), Day, Client)
     ) AS RESULT OF ApplyClient WITH Tags=(WorkspaceOwnerTableTag, ApiFeatureTag);
 
+    TABLE Batch INHERITS sys.CDoc (
+        Cfg ref(Cfg),
+        Number int32,
+        GroupA Task,
+        GroupB Task
+    ) WITH Tags=(WorkspaceOwnerTableTag, ApiFeatureTag);
+
+    TABLE Cfg INHERITS sys.CDoc (
+        Name text
+    );
+
+    TABLE Task INHERITS sys.CRecord (
+        Cfg ref(Cfg),
+        Name text,
+        GroupA Task,
+        GroupB Task
+    );
+
 	EXTENSION ENGINE BUILTIN (
 		QUERY RatedQry(RatedQryParams) RETURNS RatedQryResult WITH Tags=(WorkspaceOwnerFuncTag);
 		QUERY MockQry(MockQryParams) RETURNS MockQryResult WITH Tags=(WorkspaceOwnerFuncTag);
@@ -694,6 +711,7 @@ ALTERABLE WORKSPACE test_wsWS (
 		QUERY QryWithResponseIntent(WithResponseIntentParams) RETURNS QryWithResponseIntentResult WITH Tags=(WorkspaceOwnerFuncTag);
 		QUERY QryDailyIdx(QryDailyIdxParams) RETURNS QryDailyIdxResult WITH Tags=(WorkspaceOwnerFuncTag);
 		QUERY QryReturnsCategory(QryReturnsCategoryParams) RETURNS QryReturnsCategoryResult WITH Tags=(WorkspaceOwnerFuncTag, ApiFeatureTag);
+		QUERY QryVoid RETURNS void;
 	);
 
 	ROLE Updated; -- need for invite tests
@@ -704,6 +722,7 @@ ALTERABLE WORKSPACE test_wsWS (
 	TAG WorkspaceOwnerFuncTag;
 	TAG ApiFeatureTag FEATURE 'Backoffice API';
 
+	/* ApiRole is used for testing API access */
 	PUBLISHED ROLE ApiRole;
 	GRANT SELECT, INSERT, UPDATE, ACTIVATE, DEACTIVATE ON TABLE Currency TO ApiRole;
 	GRANT SELECT ON TABLE category TO ApiRole;
@@ -732,6 +751,8 @@ ALTERABLE WORKSPACE test_wsWS (
 	GRANT SELECT ON VIEW DailyIdx TO sys.WorkspaceOwner;
 	GRANT SELECT ON VIEW Clients TO sys.WorkspaceOwner;
 	GRANT SELECT(Year, Month, Day, offs) ON VIEW DailyIdx TO LimitedAccessRole;
+
+	GRANT EXECUTE ON QUERY QryVoid TO sys.WorkspaceOwner;
 
 	GRANT SELECT, INSERT, UPDATE ON TABLE DocActivateDenied TO sys.WorkspaceOwner;
 	GRANT SELECT, INSERT, UPDATE ON TABLE DocDeactivateDenied TO sys.WorkspaceOwner;

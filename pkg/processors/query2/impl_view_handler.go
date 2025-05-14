@@ -18,51 +18,36 @@ import (
 	"github.com/voedger/voedger/pkg/processors/oldacl"
 )
 
-type viewHandler struct {
+func viewHandler() apiPathHandler {
+	return apiPathHandler{
+		requestOpKind:   appdef.OperationKind_Select,
+		isArrayResult:   true,
+		checkRateLimit:  nil, // TODO: implement rate limit for CDocs
+		setRequestType:  viewSetRequestType,
+		setResultType:   viewSetResultType,
+		authorizeResult: viewAuthorizeResult,
+		rowsProcessor:   viewRowsProcessor,
+		exec:            viewExec,
+	}
 }
 
-var _ IApiPathHandler = (*viewHandler)(nil) // ensure that viewHandler implements IApiPathHandler
-
-func (h *viewHandler) CheckRateLimit(ctx context.Context, qw *queryWork) error {
-	// TODO: implement rate limits check
-	return nil
-}
-
-func (h *viewHandler) SetRequestType(ctx context.Context, qw *queryWork) error {
-	switch qw.iWorkspace {
-	case nil:
-		// workspace is dummy
-		if qw.iView = appdef.View(qw.appStructs.AppDef().Type, qw.msg.QName()); qw.iView == nil {
-			return coreutils.NewHTTPErrorf(http.StatusBadRequest, fmt.Sprintf("view %s does not exist", qw.msg.QName()))
-		}
-	default:
-		if qw.iView = appdef.View(qw.iWorkspace.Type, qw.msg.QName()); qw.iView == nil {
-			return coreutils.NewHTTPErrorf(http.StatusBadRequest, fmt.Sprintf("view %s does not exist in %v", qw.msg.QName(), qw.iWorkspace))
-		}
+func viewSetRequestType(ctx context.Context, qw *queryWork) error {
+	if qw.iView = appdef.View(qw.iWorkspace.Type, qw.msg.QName()); qw.iView == nil {
+		return coreutils.NewHTTPErrorf(http.StatusBadRequest, fmt.Sprintf("view %s does not exist in %v", qw.msg.QName(), qw.iWorkspace))
 	}
 	return nil
 }
-
-func (h *viewHandler) SetResultType(ctx context.Context, qw *queryWork, statelessResources istructsmem.IStatelessResources) error {
+func viewSetResultType(ctx context.Context, qw *queryWork, statelessResources istructsmem.IStatelessResources) error {
 	qw.resultType = qw.iView
 	return nil
 }
-
-func (h *viewHandler) RequestOpKind() appdef.OperationKind {
-	return appdef.OperationKind_Select
-}
-
-func (h *viewHandler) AuthorizeResult(ctx context.Context, qw *queryWork) (err error) {
+func viewAuthorizeResult(ctx context.Context, qw *queryWork) (err error) {
 	if qw.resultType != appdef.AnyType {
 		// will authorize result only if result is sys.Any
 		// otherwise each field is considered as allowed if EXECUTE ON QUERY is allowed
 		return nil
 	}
 	ws := qw.iWorkspace
-	if ws == nil {
-		// workspace is dummy
-		panic("")
-	}
 	var requestedFields []string
 	if len(qw.queryParams.Constraints.Keys) != 0 {
 		requestedFields = qw.queryParams.Constraints.Keys
@@ -83,14 +68,14 @@ func (h *viewHandler) AuthorizeResult(ctx context.Context, qw *queryWork) (err e
 	}
 	return nil
 }
-func (h *viewHandler) RowsProcessor(ctx context.Context, qw *queryWork) (err error) {
-	err = h.validateFields(qw)
+func viewRowsProcessor(ctx context.Context, qw *queryWork) (err error) {
+	err = validateFields(qw)
 	if err != nil {
 		return
 	}
 	oo := make([]*pipeline.WiredOperator, 0)
 	if len(qw.queryParams.Constraints.Include) != 0 {
-		oo = append(oo, pipeline.WireAsyncOperator("Include", newInclude(qw)))
+		oo = append(oo, pipeline.WireAsyncOperator("Include", newInclude(qw, false)))
 	}
 	if len(qw.queryParams.Constraints.Order) != 0 || qw.queryParams.Constraints.Skip > 0 || qw.queryParams.Constraints.Limit > 0 {
 		oo = append(oo, pipeline.WireAsyncOperator("Aggregator", newAggregator(qw.queryParams)))
@@ -108,7 +93,7 @@ func (h *viewHandler) RowsProcessor(ctx context.Context, qw *queryWork) (err err
 	if len(qw.queryParams.Constraints.Keys) != 0 {
 		oo = append(oo, pipeline.WireAsyncOperator("Keys", newKeys(qw.queryParams.Constraints.Keys)))
 	}
-	sender := &sender{responder: qw.msg.Responder()}
+	sender := &sender{responder: qw.msg.Responder(), isArrayResponse: true}
 	oo = append(oo, pipeline.WireAsyncOperator("Sender", sender))
 	qw.rowsProcessor = pipeline.NewAsyncPipeline(ctx, "View rows processor", oo[0], oo[1:]...)
 	qw.responseWriterGetter = func() bus.IResponseWriter {
@@ -116,8 +101,8 @@ func (h *viewHandler) RowsProcessor(ctx context.Context, qw *queryWork) (err err
 	}
 	return
 }
-func (h *viewHandler) Exec(ctx context.Context, qw *queryWork) (err error) {
-	kk, err := h.getKeys(qw)
+func viewExec(ctx context.Context, qw *queryWork) (err error) {
+	kk, err := getKeys(qw)
 	if err != nil {
 		return
 	}
@@ -136,7 +121,7 @@ func (h *viewHandler) Exec(ctx context.Context, qw *queryWork) (err error) {
 	}
 	return
 }
-func (h *viewHandler) getKeys(qw *queryWork) (keys []istructs.IKeyBuilder, err error) {
+func getKeys(qw *queryWork) (keys []istructs.IKeyBuilder, err error) {
 	fields := qw.appStructs.AppDef().Type(qw.iView.QName()).(appdef.IView).Key().Fields()
 	values := make([][]interface{}, 0, len(fields))
 	for i, field := range fields {
@@ -184,7 +169,7 @@ func (h *viewHandler) getKeys(qw *queryWork) (keys []istructs.IKeyBuilder, err e
 	}
 	return
 }
-func (h *viewHandler) validateFields(qw *queryWork) (err error) {
+func validateFields(qw *queryWork) (err error) {
 	view := qw.appStructs.AppDef().Type(qw.iView.QName()).(appdef.IView)
 
 	if qw.queryParams.Constraints == nil {

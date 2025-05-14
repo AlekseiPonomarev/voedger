@@ -7,21 +7,37 @@ package query2
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/appparts"
 	"github.com/voedger/voedger/pkg/bus"
 	"github.com/voedger/voedger/pkg/coreutils"
+	"github.com/voedger/voedger/pkg/coreutils/federation"
 	"github.com/voedger/voedger/pkg/iauthnz"
 	"github.com/voedger/voedger/pkg/isecrets"
 	"github.com/voedger/voedger/pkg/istructs"
 	payloads "github.com/voedger/voedger/pkg/itokens-payloads"
 	imetrics "github.com/voedger/voedger/pkg/metrics"
 	"github.com/voedger/voedger/pkg/pipeline"
+	"github.com/voedger/voedger/pkg/processors"
 	queryprocessor "github.com/voedger/voedger/pkg/processors/query"
 	"github.com/voedger/voedger/pkg/state"
 )
+
+func queryRateLimitExceeded(ctx context.Context, qw *queryWork) error {
+	if qw.appStructs.IsFunctionRateLimitsExceeded(qw.msg.QName(), qw.msg.WSID()) {
+		return coreutils.NewSysError(http.StatusTooManyRequests)
+	}
+	return nil
+}
+func querySetRequestType(ctx context.Context, qw *queryWork) error {
+	if qw.iQuery = appdef.Query(qw.iWorkspace.Type, qw.msg.QName()); qw.iQuery == nil {
+		return coreutils.NewHTTPErrorf(http.StatusBadRequest, fmt.Sprintf("query %s does not exist in %v", qw.msg.QName(), qw.iWorkspace))
+	}
+	return nil
+}
 
 type queryProcessorMetrics struct {
 	vvm     string
@@ -58,10 +74,13 @@ type queryWork struct {
 	iWorkspace           appdef.IWorkspace
 	iQuery               appdef.IQuery
 	iView                appdef.IView
+	iDoc                 appdef.ISingleton
+	iRecord              appdef.IContainedRecord
 	wsDesc               istructs.IRecord
 	callbackFunc         istructs.ExecQueryCallback
 	responseWriterGetter func() bus.IResponseWriter
-	apiPathHandler       IApiPathHandler
+	apiPathHandler       apiPathHandler
+	federation           federation.IFederationForQP
 }
 
 var _ pipeline.IWorkpiece = (*queryWork)(nil) // ensure that queryWork implements pipeline.IWorkpiece
@@ -83,8 +102,17 @@ func (qw *queryWork) borrow() (err error) {
 	return nil
 }
 
+func (qw *queryWork) isDeveloper() bool {
+	for _, role := range qw.principalPayload.Roles {
+		if role.QName == appdef.QNameRoleDeveloper {
+			return true
+		}
+	}
+	return false
+}
+
 func newQueryWork(msg IQueryMessage, appParts appparts.IAppPartitions,
-	maxPrepareQueries int, metrics *queryProcessorMetrics, secretReader isecrets.ISecretReader) *queryWork {
+	maxPrepareQueries int, metrics *queryProcessorMetrics, secretReader isecrets.ISecretReader, federation federation.IFederationForQP) *queryWork {
 	return &queryWork{
 		msg:                msg,
 		appParts:           appParts,
@@ -94,6 +122,7 @@ func newQueryWork(msg IQueryMessage, appParts appparts.IAppPartitions,
 		secretReader:       secretReader,
 		rowsProcessorErrCh: make(chan error, 1),
 		queryParams:        msg.QueryParams(),
+		federation:         federation,
 	}
 }
 
@@ -115,8 +144,8 @@ func operator(name string, doSync func(ctx context.Context, qw *queryWork) (err 
 }
 
 func NewIQueryMessage(requestCtx context.Context, appQName appdef.AppQName, wsid istructs.WSID, responder bus.IResponder,
-	queryParams QueryParams, docID istructs.IDType, apiPath ApiPath,
-	qName appdef.QName, partition istructs.PartitionID, host string, token string, workspaceQName appdef.QName) IQueryMessage {
+	queryParams QueryParams, docID istructs.IDType, apiPath processors.APIPath,
+	qName appdef.QName, partition istructs.PartitionID, host string, token string, workspaceQName appdef.QName, headerAccept string) IQueryMessage {
 	return &implIQueryMessage{
 		appQName:       appQName,
 		wsid:           wsid,
@@ -130,5 +159,6 @@ func NewIQueryMessage(requestCtx context.Context, appQName appdef.AppQName, wsid
 		host:           host,
 		token:          token,
 		workspaceQName: workspaceQName,
+		headerAccept:   headerAccept,
 	}
 }

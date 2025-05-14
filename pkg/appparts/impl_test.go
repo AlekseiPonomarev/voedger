@@ -19,9 +19,10 @@ import (
 	"github.com/voedger/voedger/pkg/appdef/filter"
 	"github.com/voedger/voedger/pkg/appparts"
 	"github.com/voedger/voedger/pkg/appparts/internal/schedulers"
-	"github.com/voedger/voedger/pkg/coreutils"
+	"github.com/voedger/voedger/pkg/goutils/testingu"
 	"github.com/voedger/voedger/pkg/goutils/testingu/require"
 	"github.com/voedger/voedger/pkg/iratesce"
+	"github.com/voedger/voedger/pkg/isequencer"
 	"github.com/voedger/voedger/pkg/istorage/mem"
 	"github.com/voedger/voedger/pkg/istorage/provider"
 	"github.com/voedger/voedger/pkg/istructs"
@@ -67,12 +68,12 @@ type mockActualizerRunner struct {
 
 func (ar *mockActualizerRunner) NewAndRun(ctx context.Context, app appdef.AppQName, partID istructs.PartitionID, name appdef.QName) {
 	ar.Called(ctx, app, partID, name)
-	ar.mockRunner.newAndRun(ctx, app, partID, appparts.ProcessorKind_Actualizer)
+	ar.newAndRun(ctx, app, partID, appparts.ProcessorKind_Actualizer)
 }
 
 func (ar *mockActualizerRunner) SetAppPartitions(ap appparts.IAppPartitions) {
 	ar.Called(ap)
-	ar.mockRunner.setAppPartitions(ap)
+	ar.setAppPartitions(ap)
 }
 
 type mockSchedulerRunner struct {
@@ -83,12 +84,12 @@ type mockSchedulerRunner struct {
 
 func (sr *mockSchedulerRunner) NewAndRun(ctx context.Context, app appdef.AppQName, partID istructs.PartitionID, wsIdx istructs.AppWorkspaceNumber, wsid istructs.WSID, job appdef.QName) {
 	sr.Called(ctx, app, partID, wsIdx, wsid, job)
-	sr.mockRunner.newAndRun(ctx, app, partID, appparts.ProcessorKind_Scheduler)
+	sr.newAndRun(ctx, app, partID, appparts.ProcessorKind_Scheduler)
 }
 
 func (sr *mockSchedulerRunner) SetAppPartitions(ap appparts.IAppPartitions) {
 	sr.Called(ap)
-	sr.mockRunner.setAppPartitions(ap)
+	sr.setAppPartitions(ap)
 }
 
 func Test_DeployActualizersAndSchedulers(t *testing.T) {
@@ -110,6 +111,8 @@ func Test_DeployActualizersAndSchedulers(t *testing.T) {
 		wsName := appdef.NewQName("test", "workspace")
 
 		wsb := adb.AddWorkspace(wsName)
+		wsb.AddCDoc(appdef.NewQName("test", "WSDesc"))
+		wsb.SetDescriptor(appdef.NewQName("test", "WSDesc"))
 
 		_ = wsb.AddCommand(appdef.NewQName("test", "command"))
 
@@ -132,7 +135,7 @@ func Test_DeployActualizersAndSchedulers(t *testing.T) {
 		appConfigs,
 		iratesce.TestBucketsFactory,
 		payloads.ProvideIAppTokensFactory(itokensjwt.TestTokensJWT()),
-		provider.Provide(mem.Provide(coreutils.MockTime), ""))
+		provider.Provide(mem.Provide(testingu.MockTime), ""), isequencer.SequencesTrustLevel_0)
 
 	mockActualizers := &mockActualizerRunner{}
 	mockActualizers.On("SetAppPartitions", mock.Anything).Once()
@@ -202,6 +205,8 @@ func Test_DeployActualizersAndSchedulers(t *testing.T) {
 			wsName := appdef.NewQName("test", "workspace")
 
 			wsb := adb.AddWorkspace(wsName)
+			wsb.AddCDoc(appdef.NewQName("test", "WSDesc"))
+			wsb.SetDescriptor(appdef.NewQName("test", "WSDesc"))
 
 			_ = wsb.AddCommand(appdef.NewQName("test", "command"))
 

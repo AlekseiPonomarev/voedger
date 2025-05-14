@@ -57,9 +57,13 @@ func (rec *recordType) copyFrom(src *recordType) {
 //
 // # Panics
 //   - if unsupported field type
-func (row *rowType) fieldValue(f appdef.IField) interface{} {
+func (row *rowType) fieldValue(f appdef.IField) any {
 	n := f.Name()
 	switch f.DataKind() {
+	case appdef.DataKind_int8: // #3435 [~server.vsql.smallints/cmp.istructs~impl]
+		return row.AsInt8(n)
+	case appdef.DataKind_int16: // #3435 [~server.vsql.smallints/cmp.istructs~impl]
+		return row.AsInt16(n)
 	case appdef.DataKind_int32:
 		return row.AsInt32(n)
 	case appdef.DataKind_int64:
@@ -142,19 +146,23 @@ func (row *rowType) SpecifiedValues(cb func(appdef.IField, any) bool) {
 
 	// user fields
 	goOn := true
-	row.dyB.IterateFields(nil, func(name string, value interface{}) bool {
+	row.dyB.IterateFields(nil, func(name string, value any) bool {
 		field := row.fieldDef(name)
 		switch field.DataKind() {
 		case appdef.DataKind_RecordID:
 			value = istructs.RecordID(value.(int64)) //nolint:gosec
 		case appdef.DataKind_QName:
-			qNameID := binary.BigEndian.Uint16(value.([]byte))
-			qName, err := row.appCfg.qNames.QName(qNameID)
+			QNameID := binary.BigEndian.Uint16(value.([]byte))
+			qName, err := row.appCfg.qNames.QName(QNameID)
 			if err != nil {
 				// notest
 				panic(err)
 			}
 			value = qName
+		}
+		switch field.DataKind() {
+		case appdef.DataKind_int8: // #3435 [~server.vsql.smallints/cmp.istructs~impl]
+			value = int8(value.(byte)) // nolint G115 : dynobuffers uses byte to store int8
 		}
 		goOn = cb(row.fieldDef(name), value)
 		return goOn
@@ -173,6 +181,10 @@ func (row *rowType) SpecifiedValues(cb func(appdef.IField, any) bool) {
 
 func nilToZeroValue(kind appdef.DataKind) any {
 	switch kind {
+	case appdef.DataKind_int8: // #3435 [~server.vsql.smallints/cmp.istructs~impl]
+		return int8(0)
+	case appdef.DataKind_int16: // #3435 [~server.vsql.smallints/cmp.istructs~impl]
+		return int16(0)
 	case appdef.DataKind_int32:
 		return int32(0)
 	case appdef.DataKind_int64:

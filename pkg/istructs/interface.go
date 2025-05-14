@@ -65,8 +65,7 @@ type IAppStructs interface {
 	ClusterAppID() ClusterAppID
 	AppQName() appdef.AppQName
 
-	IsFunctionRateLimitsExceeded(funcQName appdef.QName, wsid WSID) bool
-
+	IsFunctionRateLimitsExceeded(funcQName appdef.QName, wsid WSID) bool // FIXME: eliminate, use the one from iappparts?
 	// Describe package names
 	DescribePackageNames() []string
 
@@ -81,7 +80,23 @@ type IAppStructs interface {
 
 	NumAppWorkspaces() NumAppWorkspaces
 
-	AppTokens() IAppTokens
+	AppTokens() IAppTokens // FIXME: check what is for?
+
+	// to execute PutWLog and ApplyRecords skipping SequencesTrustLevel on partition recoevery
+	// panics if IPLogEvent was not loaded from the database
+	GetEventReapplier(IPLogEvent) IEventReapplier
+
+	SeqTypes() map[QNameID]map[QNameID]uint64
+
+	QNameID(qName appdef.QName) (QNameID, error)
+}
+
+// need to re-apply an already stored PLog
+// does not consider SequencesTrustLevel
+
+type IEventReapplier interface {
+	PutWLog() error
+	ApplyRecords() error
 }
 
 type IEvents interface {

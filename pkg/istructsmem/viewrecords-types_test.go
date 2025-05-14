@@ -15,6 +15,7 @@ import (
 	"github.com/voedger/voedger/pkg/appdef/builder"
 	"github.com/voedger/voedger/pkg/appdef/constraints"
 	"github.com/voedger/voedger/pkg/goutils/testingu/require"
+	"github.com/voedger/voedger/pkg/isequencer"
 
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/iratesce"
@@ -36,10 +37,14 @@ func Test_KeyType(t *testing.T) {
 		adb.AddPackage("test", "test.com/test")
 
 		wsb := adb.AddWorkspace(appdef.NewQName("test", "workspace"))
+		wsb.AddCDoc(appdef.NewQName("test", "WSDesc"))
+		wsb.SetDescriptor(appdef.NewQName("test", "WSDesc"))
 
 		t.Run("should be ok to build view", func(t *testing.T) {
 			view := wsb.AddView(viewName)
 			view.Key().PartKey().
+				AddField("pk_int8", appdef.DataKind_int8).
+				AddField("pk_int16", appdef.DataKind_int16).
 				AddField("pk_int32", appdef.DataKind_int32).
 				AddField("pk_int64", appdef.DataKind_int64).
 				AddField("pk_float32", appdef.DataKind_float32).
@@ -49,6 +54,8 @@ func Test_KeyType(t *testing.T) {
 				AddRefField("pk_recID").
 				AddField("pk_number", appdef.DataKind_float64)
 			view.Key().ClustCols().
+				AddField("cc_int8", appdef.DataKind_int8).
+				AddField("cc_int16", appdef.DataKind_int16).
 				AddField("cc_int32", appdef.DataKind_int32).
 				AddField("cc_int64", appdef.DataKind_int64).
 				AddField("cc_float32", appdef.DataKind_float32).
@@ -59,6 +66,8 @@ func Test_KeyType(t *testing.T) {
 				AddField("cc_number", appdef.DataKind_float64).
 				AddField("cc_bytes", appdef.DataKind_bytes, constraints.MaxLen(64))
 			view.Value().
+				AddField("val_int8", appdef.DataKind_int8, false).
+				AddField("val_int16", appdef.DataKind_int16, false).
 				AddField("val_string", appdef.DataKind_string, false, constraints.MaxLen(1024))
 		})
 
@@ -71,7 +80,7 @@ func Test_KeyType(t *testing.T) {
 	appCfgs := appConfigs()
 	appCfg := appCfgs.GetConfig(appName)
 
-	appProvider := Provide(appCfgs, iratesce.TestBucketsFactory, testTokensFactory(), teststore.NewStorageProvider(teststore.NewStorage(appName)))
+	appProvider := Provide(appCfgs, iratesce.TestBucketsFactory, testTokensFactory(), teststore.NewStorageProvider(teststore.NewStorage(appName)), isequencer.SequencesTrustLevel_0)
 	app, err := appProvider.BuiltIn(appName)
 	require.NoError(err)
 	require.NotNil(app)
@@ -83,6 +92,8 @@ func Test_KeyType(t *testing.T) {
 
 		require.NotNil(kb)
 
+		kb.PutInt8("pk_int8", 123)
+		kb.PutInt16("pk_int16", 12345)
 		kb.PutInt32("pk_int32", 1111111)
 		kb.PutInt64("pk_int64", 222222222222)
 		kb.PutFloat32("pk_float32", 3.333e3)
@@ -92,6 +103,8 @@ func Test_KeyType(t *testing.T) {
 		kb.PutRecordID("pk_recID", istructs.RecordID(5555555))
 		kb.PutNumber("pk_number", gojson.Number("1.23456789"))
 
+		kb.PutInt8("cc_int8", 123)
+		kb.PutInt16("cc_int16", 12345)
 		kb.PutInt32("cc_int32", 6666666)
 		kb.PutInt64("cc_int64", 777777777777)
 		kb.PutFloat32("cc_float32", 8.888e8)
@@ -117,6 +130,8 @@ func Test_KeyType(t *testing.T) {
 
 		require.NotNil(k)
 
+		require.EqualValues(123, k.AsInt8("pk_int8"))
+		require.EqualValues(12345, k.AsInt16("pk_int16"))
 		require.EqualValues(1111111, k.AsInt32("pk_int32"))
 		require.EqualValues(222222222222, k.AsInt64("pk_int64"))
 		require.EqualValues(3.333e3, k.AsFloat32("pk_float32"))
@@ -126,6 +141,8 @@ func Test_KeyType(t *testing.T) {
 		require.EqualValues(5555555, k.AsRecordID("pk_recID"))
 		require.EqualValues(1.23456789, k.AsFloat64("pk_number"))
 
+		require.EqualValues(123, k.AsInt8("cc_int8"))
+		require.EqualValues(12345, k.AsInt16("cc_int16"))
 		require.EqualValues(6666666, k.AsInt32("cc_int32"))
 		require.EqualValues(777777777777, k.AsInt64("cc_int64"))
 		require.EqualValues(8.888e8, k.AsFloat32("cc_float32"))
@@ -183,11 +200,21 @@ func Test_KeyType(t *testing.T) {
 
 	t.Run("should be ok IValueBuilder.ToBytes()", func(t *testing.T) {
 		vb := newValue(appCfg, viewName)
+		vb.PutInt8("val_int8", 123)
+		vb.PutInt16("val_int16", 12345)
 		vb.PutString("val_string", "test string")
 
 		b, err := vb.ToBytes()
 		require.NoError(err)
 		require.NotEmpty(b)
+
+		dupe := newValue(appCfg, viewName)
+		err = dupe.loadFromBytes(b)
+		require.NoError(err)
+		require.EqualValues(123, dupe.AsInt8("val_int8"))
+		require.EqualValues(12345, dupe.AsInt16("val_int16"))
+		require.EqualValues(12345, dupe.AsInt16("val_int16"))
+		require.EqualValues("test string", dupe.AsString("val_string"))
 	})
 }
 
@@ -206,6 +233,8 @@ func TestCore_ViewRecords(t *testing.T) {
 		adb := builder.New()
 		adb.AddPackage("test", "test.com/test")
 		wsb := adb.AddWorkspace(appdef.NewQName("test", "workspace"))
+		wsb.AddCDoc(appdef.NewQName("test", "WSDesc"))
+		wsb.SetDescriptor(appdef.NewQName("test", "WSDesc"))
 		t.Run("should be ok to build application", func(t *testing.T) {
 			view := wsb.AddView(appdef.NewQName("test", "viewDrinks"))
 			view.Key().PartKey().
@@ -238,7 +267,7 @@ func TestCore_ViewRecords(t *testing.T) {
 
 	appCfgs := appConfigs()
 	appCfg := appCfgs.GetConfig(istructs.AppQName_test1_app1)
-	p := Provide(appCfgs, iratesce.TestBucketsFactory, testTokensFactory(), storageProvider)
+	p := Provide(appCfgs, iratesce.TestBucketsFactory, testTokensFactory(), storageProvider, isequencer.SequencesTrustLevel_0)
 	app, err := p.BuiltIn(istructs.AppQName_test1_app1)
 	require.NoError(err)
 	viewRecords := app.ViewRecords()
@@ -870,6 +899,8 @@ func Test_ViewRecordsPutJSON(t *testing.T) {
 		adb := builder.New()
 		adb.AddPackage("test", "test.com/test")
 		wsb := adb.AddWorkspace(appdef.NewQName("test", "workspace"))
+		wsb.AddCDoc(appdef.NewQName("test", "WSDesc"))
+		wsb.SetDescriptor(appdef.NewQName("test", "WSDesc"))
 		t.Run("should be ok to build application", func(t *testing.T) {
 			view := wsb.AddView(appdef.MustParseQName(viewName))
 			view.Key().PartKey().
@@ -886,7 +917,7 @@ func Test_ViewRecordsPutJSON(t *testing.T) {
 		return cfgs
 	}()
 
-	app, err := Provide(appCfgs, iratesce.TestBucketsFactory, testTokensFactory(), storageProvider).BuiltIn(appName)
+	app, err := Provide(appCfgs, iratesce.TestBucketsFactory, testTokensFactory(), storageProvider, isequencer.SequencesTrustLevel_0).BuiltIn(appName)
 	require.NoError(err)
 
 	t.Run("should be ok to put view record via PutJSON", func(t *testing.T) {
@@ -991,6 +1022,8 @@ func Test_LoadStoreViewRecord_Bytes(t *testing.T) {
 	adb := builder.New()
 	adb.AddPackage("test", "test.com/test")
 	wsb := adb.AddWorkspace(appdef.NewQName("test", "workspace"))
+	wsb.AddCDoc(appdef.NewQName("test", "WSDesc"))
+	wsb.SetDescriptor(appdef.NewQName("test", "WSDesc"))
 	t.Run("should be ok to build application", func(t *testing.T) {
 		v := wsb.AddView(viewName)
 		v.Key().PartKey().
@@ -1132,6 +1165,8 @@ func Test_ViewRecords_ClustColumnsQName(t *testing.T) {
 		adb := builder.New()
 		adb.AddPackage("test", "test.com/test")
 		wsb := adb.AddWorkspace(appdef.NewQName("test", "workspace"))
+		wsb.AddCDoc(appdef.NewQName("test", "WSDesc"))
+		wsb.SetDescriptor(appdef.NewQName("test", "WSDesc"))
 		t.Run("should be ok to build application", func(t *testing.T) {
 			v := wsb.AddView(appdef.NewQName("test", "viewDrinks"))
 			v.Key().PartKey().
@@ -1154,7 +1189,7 @@ func Test_ViewRecords_ClustColumnsQName(t *testing.T) {
 		return cfgs
 	}
 
-	p := Provide(appConfigs(), iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider())
+	p := Provide(appConfigs(), iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider(), isequencer.SequencesTrustLevel_0)
 	as, err := p.BuiltIn(appName)
 	require.NoError(err)
 	viewRecords := as.ViewRecords()
@@ -1211,6 +1246,8 @@ func Test_ViewRecord_GetBatch(t *testing.T) {
 	adb := builder.New()
 	adb.AddPackage("test", "test.com/test")
 	wsb := adb.AddWorkspace(appdef.NewQName("test", "workspace"))
+	wsb.AddCDoc(appdef.NewQName("test", "WSDesc"))
+	wsb.SetDescriptor(appdef.NewQName("test", "WSDesc"))
 	t.Run("should be ok to build application", func(t *testing.T) {
 		v := wsb.AddView(championshipsView)
 		v.Key().PartKey().
@@ -1236,7 +1273,7 @@ func Test_ViewRecord_GetBatch(t *testing.T) {
 	cfgs := make(AppConfigsType, 1)
 	cfg := cfgs.AddBuiltInAppConfig(appName, adb)
 	cfg.SetNumAppWorkspaces(istructs.DefaultNumAppWorkspaces)
-	provider := Provide(cfgs, iratesce.TestBucketsFactory, testTokensFactory(), storageProvider)
+	provider := Provide(cfgs, iratesce.TestBucketsFactory, testTokensFactory(), storageProvider, isequencer.SequencesTrustLevel_0)
 
 	app, err := provider.BuiltIn(appName)
 	require.NoError(err)
@@ -1495,6 +1532,8 @@ func Test_ViewRecordStructure(t *testing.T) {
 	adb.AddPackage("test", "test.com/test")
 	t.Run("should be ok to build application", func(t *testing.T) {
 		wsb := adb.AddWorkspace(appdef.NewQName("test", "workspace"))
+		wsb.AddCDoc(appdef.NewQName("test", "WSDesc"))
+		wsb.SetDescriptor(appdef.NewQName("test", "WSDesc"))
 		v := wsb.AddView(viewName)
 		v.Key().PartKey().
 			AddField("ValueDateYear", appdef.DataKind_int32)

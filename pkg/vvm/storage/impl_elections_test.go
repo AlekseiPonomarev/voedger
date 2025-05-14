@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/voedger/voedger/pkg/coreutils"
+	"github.com/voedger/voedger/pkg/goutils/testingu"
 	"github.com/voedger/voedger/pkg/istorage/mem"
 	"github.com/voedger/voedger/pkg/istorage/provider"
 	"github.com/voedger/voedger/pkg/istructs"
@@ -21,7 +21,7 @@ const seconds10 = 10
 
 func TestInsertIfNotExist(t *testing.T) {
 	require := require.New(t)
-	appStorageProvider := provider.Provide(mem.Provide(coreutils.MockTime))
+	appStorageProvider := provider.Provide(mem.Provide(testingu.MockTime))
 	sysVvmAppStorage, err := appStorageProvider.AppStorage(istructs.AppQName_sys_vvm)
 	require.NoError(err)
 	const (
@@ -36,7 +36,7 @@ func TestInsertIfNotExist(t *testing.T) {
 	require.True(ok)
 
 	// check the underlying storage
-	pKey, cCols := ttlStorage.(*implElectionsITTLStorage).buildKeys(ttlStorageImplKey)
+	pKey, cCols := ttlStorage.(*implIElectionsTTLStorage).buildKeys(ttlStorageImplKey)
 	valBytes := []byte{}
 	ok, err = sysVvmAppStorage.TTLGet(pKey, cCols, &valBytes)
 	require.NoError(err)
@@ -50,7 +50,7 @@ func TestInsertIfNotExist(t *testing.T) {
 	require.Equal(expectedVal, storedVal)
 
 	// expire the value
-	coreutils.MockTime.Sleep(seconds10 * time.Second)
+	testingu.MockTime.Sleep(seconds10 * time.Second)
 	ok, err = sysVvmAppStorage.TTLGet(pKey, cCols, &valBytes)
 	require.NoError(err)
 	require.False(ok)
@@ -58,7 +58,7 @@ func TestInsertIfNotExist(t *testing.T) {
 
 func TestCompareAndSwap(t *testing.T) {
 	require := require.New(t)
-	appStorageProvider := provider.Provide(mem.Provide(coreutils.MockTime))
+	appStorageProvider := provider.Provide(mem.Provide(testingu.MockTime))
 	sysVvmAppStorage, err := appStorageProvider.AppStorage(istructs.AppQName_sys_vvm)
 	require.NoError(err)
 	const (
@@ -80,7 +80,7 @@ func TestCompareAndSwap(t *testing.T) {
 	require.NoError(err)
 	require.True(ok)
 
-	pKey, cCols := ttlStorage.(*implElectionsITTLStorage).buildKeys(ttlStorageImplKey)
+	pKey, cCols := ttlStorage.(*implIElectionsTTLStorage).buildKeys(ttlStorageImplKey)
 
 	t.Run("basic usage", func(t *testing.T) {
 		// swap stored oldVal->newVal -> ok
@@ -118,7 +118,7 @@ func TestCompareAndSwap(t *testing.T) {
 
 func TestCompareAndDelete(t *testing.T) {
 	require := require.New(t)
-	appStorageProvider := provider.Provide(mem.Provide(coreutils.MockTime))
+	appStorageProvider := provider.Provide(mem.Provide(testingu.MockTime))
 	sysVvmAppStorage, err := appStorageProvider.AppStorage(istructs.AppQName_sys_vvm)
 	require.NoError(err)
 	const (
@@ -143,7 +143,7 @@ func TestCompareAndDelete(t *testing.T) {
 		require.True(ok)
 
 		// check the value is removed indeed from the underlying storage
-		pKey, cCols := ttlStorage.(*implElectionsITTLStorage).buildKeys(ttlStorageImplKey)
+		pKey, cCols := ttlStorage.(*implIElectionsTTLStorage).buildKeys(ttlStorageImplKey)
 		valBytes := []byte{}
 		ok, err = sysVvmAppStorage.TTLGet(pKey, cCols, &valBytes)
 		require.NoError(err)

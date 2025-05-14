@@ -331,6 +331,8 @@ type VoidOrDef struct {
 type DataType struct {
 	Varchar   *TypeVarchar `parser:"( @@"`
 	Bytes     *TypeBytes   `parser:"| @@"`
+	Int8      bool         `parser:"| @('tinyint' | 'int8')"`
+	Int16     bool         `parser:"| @('smallint' | 'int16')"`
 	Int32     bool         `parser:"| @('integer' | 'int' | 'int32')"`
 	Int64     bool         `parser:"| @('bigint' | 'int64')"`
 	Float32   bool         `parser:"| @('real' | 'float' | 'float32')"`
@@ -348,6 +350,10 @@ func (q DataType) String() (s string) {
 			return fmt.Sprintf("varchar[%d]", *q.Varchar.MaxLen)
 		}
 		return fmt.Sprintf("varchar[%d]", appdef.DefaultFieldMaxLength)
+	} else if q.Int8 {
+		return "int8"
+	} else if q.Int16 {
+		return "int16"
 	} else if q.Int32 {
 		return "int32"
 	} else if q.Int64 {
@@ -581,7 +587,7 @@ type RateObjectScope struct {
 
 type RateSubjectScope struct {
 	PerSubject bool `parser:"@('PER' 'SUBJECT')"`
-	PerIp      bool `parser:" | @('PER' 'IP')"`
+	PerIP      bool `parser:" | @('PER' 'IP')"`
 }
 
 type RateStmt struct {
@@ -644,14 +650,19 @@ type LimitStmt struct {
 
 func (s LimitStmt) GetName() string { return string(s.Name) }
 
+type GrantColumn struct {
+	Pos     lexer.Position
+	SysName string      `parser:"@(('sys' '.' 'ID') | 'sys' '.' 'ParentID' | 'sys' '.' 'IsActive' | 'sys' '.' 'QName' | 'sys' '.' 'Container')"`
+	Name    *Identifier `parser:"| @@"`
+}
 type GrantTableAction struct {
 	Pos        lexer.Position
-	Select     bool         `parser:"(@'SELECT'"`
-	Insert     bool         `parser:"| @'INSERT'"`
-	Update     bool         `parser:"| @'UPDATE'"`
-	Activate   bool         `parser:"| @'ACTIVATE'"`
-	Deactivate bool         `parser:"| @'DEACTIVATE')"`
-	Columns    []Identifier `parser:"( '(' @@ (',' @@)* ')' )?"`
+	Select     bool          `parser:"(@'SELECT'"`
+	Insert     bool          `parser:"| @'INSERT'"`
+	Update     bool          `parser:"| @'UPDATE'"`
+	Activate   bool          `parser:"| @'ACTIVATE'"`
+	Deactivate bool          `parser:"| @'DEACTIVATE')"`
+	Columns    []GrantColumn `parser:"( '(' @@ (',' @@)* ')' )?"`
 }
 
 type GrantAllTablesAction struct {

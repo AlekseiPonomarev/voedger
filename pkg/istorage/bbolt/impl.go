@@ -21,12 +21,13 @@ import (
 	"github.com/voedger/voedger/pkg/coreutils"
 	"github.com/voedger/voedger/pkg/coreutils/utils"
 	"github.com/voedger/voedger/pkg/goutils/logger"
+	"github.com/voedger/voedger/pkg/goutils/timeu"
 	"github.com/voedger/voedger/pkg/istorage"
 )
 
 type appStorageFactory struct {
 	bboltParams ParamsType
-	iTime       coreutils.ITime
+	iTime       timeu.ITime
 	ctx         context.Context
 	cancel      context.CancelFunc
 	wg          *sync.WaitGroup
@@ -87,7 +88,7 @@ func (p *appStorageFactory) Init(appName istorage.SafeAppName) error {
 	return db.Close()
 }
 
-func (p *appStorageFactory) Time() coreutils.ITime {
+func (p *appStorageFactory) Time() timeu.ITime {
 	return p.iTime
 }
 
@@ -115,7 +116,7 @@ func unSafeKey(value []byte) []byte {
 // implemetation for istorage.IAppStorage.
 type appStorageType struct {
 	db    *bolt.DB
-	iTime coreutils.ITime
+	iTime timeu.ITime
 }
 
 //nolint:revive
@@ -422,7 +423,7 @@ func (s *appStorageType) GetBatch(pKey []byte, items []istorage.GetBatchItem) (e
 	})
 }
 
-func (s *appStorageType) read(ctx context.Context, pKey []byte, startCCols, finishCCols []byte, cb istorage.ReadCallback, checkTtl bool) (err error) {
+func (s *appStorageType) read(ctx context.Context, pKey []byte, startCCols, finishCCols []byte, cb istorage.ReadCallback, checkTTL bool) (err error) {
 	if (len(startCCols) > 0) && (len(finishCCols) > 0) && (bytes.Compare(startCCols, finishCCols) >= 0) {
 		return nil // absurd range
 	}
@@ -461,7 +462,7 @@ func (s *appStorageType) read(ctx context.Context, pKey []byte, startCCols, fini
 			}
 
 			d = d.Update(v)
-			if checkTtl && d.IsExpired(s.iTime.Now()) {
+			if checkTTL && d.IsExpired(s.iTime.Now()) {
 				k, v = cr.Next()
 				continue
 			}
@@ -543,7 +544,7 @@ func (s *appStorageType) putValue(tx *bolt.Tx, pKey, cCols, value []byte, ttlSec
 			return ErrTTLBucketNotFound
 		}
 
-		if err := ttlBucket.Put(makeTtlKey(pKey, cCols, d.ExpireAt), nil); err != nil {
+		if err := ttlBucket.Put(makeTTLKey(pKey, cCols, d.ExpireAt), nil); err != nil {
 			return err
 		}
 	}
@@ -657,8 +658,8 @@ func extractPKAndCCols(ttlKey []byte) ([]byte, []byte, error) {
 	return pKey, cCols, nil
 }
 
-// makeTtlKey creates a key for TTL bucket from the primary key, clustering columns and expireAt
-func makeTtlKey(pKey, cCols []byte, expireAt int64) []byte {
+// makeTTLKey creates a key for TTL bucket from the primary key, clustering columns and expireAt
+func makeTTLKey(pKey, cCols []byte, expireAt int64) []byte {
 	// key = 8 bytes for expireAt + 8 bytes for length of pKey + pKey + cCols
 	totalLength := 2*utils.Uint64Size + len(pKey) + len(cCols)
 	ttlKey := make([]byte, totalLength)

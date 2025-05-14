@@ -30,7 +30,7 @@ import (
 // wrapped ErrUnexpectedStatusCode is returned -> *HTTPResponse contains a valid response body
 // otherwise if err != nil (e.g. socket error)-> *HTTPResponse is nil
 func (f *implIFederation) post(relativeURL string, body string, optFuncs ...coreutils.ReqOptFunc) (*coreutils.HTTPResponse, error) {
-	optFuncs = append(optFuncs, coreutils.WithMethod(http.MethodPost))
+	optFuncs = append(optFuncs, coreutils.WithDefaultMethod(http.MethodPost))
 	return f.req(relativeURL, body, optFuncs...)
 }
 
@@ -165,18 +165,31 @@ func getFuncError(httpResp *coreutils.HTTPResponse) (funcError coreutils.FuncErr
 	if err := json.Unmarshal([]byte(httpResp.Body), &m); err != nil {
 		return funcError, fmt.Errorf("IFederation: failed to unmarshal response body to FuncErr: %w. Body:\n%s", err, httpResp.Body)
 	}
-	sysErrorMap := m["sys.Error"].(map[string]interface{})
-	errQNameStr, ok := sysErrorMap["QName"].(string)
-	if ok {
-		errQName, err := appdef.ParseQName(errQNameStr)
-		if err != nil {
-			errQName = appdef.NewQName("<err>", sysErrorMap["QName"].(string))
+	sysErrorIntf, hasSysError := m["sys.Error"]
+	if hasSysError {
+		sysErrorMap := sysErrorIntf.(map[string]interface{})
+		errQNameStr, ok := sysErrorMap["QName"].(string)
+		if ok {
+			errQName, err := appdef.ParseQName(errQNameStr)
+			if err != nil {
+				errQName = appdef.NewQName("<err>", sysErrorMap["QName"].(string))
+			}
+			funcError.SysError.QName = errQName
 		}
-		funcError.SysError.QName = errQName
+		funcError.HTTPStatus = int(sysErrorMap["HTTPStatus"].(float64))
+		funcError.Message = sysErrorMap["Message"].(string)
+		funcError.Data, _ = sysErrorMap["Data"].(string)
+	} else {
+		if apiV2QueryError, ok := m["error"]; ok {
+			m = apiV2QueryError.(map[string]interface{})
+		}
+		if commonErrorStatusIntf, ok := m["status"]; ok {
+			funcError.SysError.HTTPStatus = int(commonErrorStatusIntf.(float64))
+		}
+		if commonErrorMessageIntf, ok := m["message"]; ok {
+			funcError.SysError.Message = commonErrorMessageIntf.(string)
+		}
 	}
-	funcError.SysError.HTTPStatus = int(sysErrorMap["HTTPStatus"].(float64))
-	funcError.SysError.Message = sysErrorMap["Message"].(string)
-	funcError.SysError.Data, _ = sysErrorMap["Data"].(string)
 	return funcError, nil
 }
 
@@ -207,7 +220,11 @@ func (f *implIFederation) httpRespToFuncResp(httpResp *coreutils.HTTPResponse, h
 	}
 	if strings.HasPrefix(httpResp.HTTPResp.Request.URL.Path, "/api/v2/") {
 		// TODO: eliminate this after https://github.com/voedger/voedger/issues/1313
-		err = json.Unmarshal([]byte(httpResp.Body), &res.APIV2Response)
+		if httpResp.HTTPResp.Header.Get(coreutils.ContentType) == coreutils.ContentType_ApplicationJSON {
+			if err = json.Unmarshal([]byte(httpResp.Body), &res.QPv2Response); err == nil {
+				err = json.Unmarshal([]byte(httpResp.Body), &res.CommandResponse)
+			}
+		}
 	} else {
 		err = json.Unmarshal([]byte(httpResp.Body), &res)
 	}
@@ -315,4 +332,9 @@ func (f *implIFederation) N10NSubscribe(projectionKey in10n.ProjectionKey) (offs
 		}
 	}
 	return
+}
+
+func (f *implIFederationForQP) QueryNoRetry(relativeURL string, optFuncs ...coreutils.ReqOptFunc) (*coreutils.FuncResponse, error) {
+	optFuncs = append(optFuncs, coreutils.WithSkipRetryOn503())
+	return f.fed.Query(relativeURL, optFuncs...)
 }

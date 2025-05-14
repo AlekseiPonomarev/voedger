@@ -16,9 +16,10 @@ import (
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/appdef/builder"
 	"github.com/voedger/voedger/pkg/appparts"
-	"github.com/voedger/voedger/pkg/coreutils"
+	"github.com/voedger/voedger/pkg/goutils/testingu"
 	"github.com/voedger/voedger/pkg/iextengine"
 	"github.com/voedger/voedger/pkg/irates"
+	"github.com/voedger/voedger/pkg/isequencer"
 	"github.com/voedger/voedger/pkg/istorage/mem"
 	"github.com/voedger/voedger/pkg/istorage/provider"
 	"github.com/voedger/voedger/pkg/istructs"
@@ -598,9 +599,7 @@ func Test_Workspaces(t *testing.T) {
 		w := def.Workspace(appdef.NewQName("pkg", "W"))
 		require.NotNil(w)
 		actualAncestors := []appdef.IWorkspace{}
-		for _, a := range w.Ancestors() {
-			actualAncestors = append(actualAncestors, a)
-		}
+		actualAncestors = append(actualAncestors, w.Ancestors()...)
 		require.Len(actualAncestors, 2)
 	})
 }
@@ -2197,11 +2196,11 @@ TABLE MyTable1 INHERITS ODocUnknown ( MyField ref(registry.Login) NOT NULL ));
 }
 
 //go:embed package.vsql
-var pkgSqlFS embed.FS
+var pkgSQLFS embed.FS
 
 func TestParseFilesFromFSRoot(t *testing.T) {
 	t.Run("dot", func(t *testing.T) {
-		_, err := ParsePackageDir("github.com/untillpro/main", pkgSqlFS, ".")
+		_, err := ParsePackageDir("github.com/untillpro/main", pkgSQLFS, ".")
 		require.NoError(t, err)
 	})
 }
@@ -2691,7 +2690,7 @@ func Test_Identifiers(t *testing.T) {
 	WORKSPACE w (
 		ROLE _role;
 	);`)
-	require.ErrorContains(err, "file1.vsql:3:8: invalid input text")
+	require.ErrorContains(err, "file1.vsql:3:8: lexer: invalid input text")
 
 	_, err = ParseFile("file1.vsql", `APPLICATION app1();
 	WORKSPACE w (
@@ -2703,7 +2702,7 @@ func Test_Identifiers(t *testing.T) {
 	WORKSPACE w (
 		ROLE r世界;
 	);`)
-	require.ErrorContains(err, "file1.vsql:3:9: invalid input text")
+	require.ErrorContains(err, "file1.vsql:3:9: lexer: invalid input text")
 }
 
 func Test_RefsWorkspaces(t *testing.T) {
@@ -2838,22 +2837,22 @@ func Test_Jobs(t *testing.T) {
 func Test_DataTypes(t *testing.T) {
 
 	require := assertions(t)
-	require.NoAppSchemaError(`APPLICATION test();
+	schema, err := require.AppSchema(`APPLICATION test();
 ALTER WORKSPACE sys.AppWorkspaceWS (
 	TABLE t1 INHERITS sys.WDoc(
 		s1_1_1 character varying(10),
-		s1_1_1 character varying,
+		s1_1_2 character varying,
 		s1_2_1 varchar(10),
 		s1_2_2 varchar,
 		s1_3_1 text(10),
-		s1_3_1 text,
+		s1_3_2 text,
 
 		s2_1_1 binary varying(10),
-		s2_1_1 binary varying,
+		s2_1_2 binary varying,
 		s2_2_1 varbinary(10),
 		s2_2_2 varbinary,
 		s2_3_1 bytes(10),
-		s2_3_1 bytes,
+		s2_3_2 bytes,
 
 		s3_1 bigint,
 		s3_2 int64,
@@ -2879,10 +2878,84 @@ ALTER WORKSPACE sys.AppWorkspaceWS (
 		s9_2 blob,
 
 		s10_1 qualified name,
-		s10_2 qname
+		s10_2 qname,
 
+		s11_1 int16,
+		s11_2 smallint,
+
+		s12_1 int8,
+		s12_2 tinyint
 	);
 );`)
+	require.NoError(err)
+	builder := builder.New()
+	err = BuildAppDefs(schema, builder)
+	require.NoError(err)
+	app, err := builder.Build()
+	require.NoError(err)
+	require.NotNil(app)
+	ws := app.Workspace(appdef.NewQName("sys", "AppWorkspaceWS"))
+	tbl := ws.Type(appdef.NewQName("pkg", "t1")).(appdef.IWDoc)
+
+	// [~server.vsql.smallints/it.SmallIntegers~impl]
+	// smallint
+	require.Equal(appdef.DataKind_int16, tbl.Field("s11_1").DataKind())
+	require.Equal(appdef.DataKind_int16, tbl.Field("s11_2").DataKind())
+
+	// tinyint
+	require.Equal(appdef.DataKind_int8, tbl.Field("s12_1").DataKind())
+	require.Equal(appdef.DataKind_int8, tbl.Field("s12_2").DataKind())
+
+	// qname
+	require.Equal(appdef.DataKind_QName, tbl.Field("s10_1").DataKind())
+	require.Equal(appdef.DataKind_QName, tbl.Field("s10_2").DataKind())
+
+	// blob
+	require.Equal(appdef.DataKind_RecordID, tbl.Field("s9_1").DataKind())
+	require.Equal(appdef.DataKind_RecordID, tbl.Field("s9_2").DataKind())
+
+	// bool
+	require.Equal(appdef.DataKind_bool, tbl.Field("s8_1").DataKind())
+	require.Equal(appdef.DataKind_bool, tbl.Field("s8_2").DataKind())
+
+	//money
+	require.Equal(appdef.DataKind_int64, tbl.Field("s7_2").DataKind())
+	require.Equal(appdef.DataKind_int64, tbl.Field("s7_3").DataKind())
+
+	// float64
+	require.Equal(appdef.DataKind_float64, tbl.Field("s6_1").DataKind())
+	require.Equal(appdef.DataKind_float64, tbl.Field("s6_2").DataKind())
+
+	// float32
+	require.Equal(appdef.DataKind_float32, tbl.Field("s5_1").DataKind())
+	require.Equal(appdef.DataKind_float32, tbl.Field("s5_2").DataKind())
+	require.Equal(appdef.DataKind_float32, tbl.Field("s5_3").DataKind())
+
+	//int32
+	require.Equal(appdef.DataKind_int32, tbl.Field("s4_1").DataKind())
+	require.Equal(appdef.DataKind_int32, tbl.Field("s4_2").DataKind())
+	require.Equal(appdef.DataKind_int32, tbl.Field("s4_3").DataKind())
+
+	//int64
+	require.Equal(appdef.DataKind_int64, tbl.Field("s3_1").DataKind())
+	require.Equal(appdef.DataKind_int64, tbl.Field("s3_2").DataKind())
+
+	// bytes
+	require.Equal(appdef.DataKind_bytes, tbl.Field("s2_1_1").DataKind())
+	require.Equal(appdef.DataKind_bytes, tbl.Field("s2_1_2").DataKind())
+	require.Equal(appdef.DataKind_bytes, tbl.Field("s2_2_1").DataKind())
+	require.Equal(appdef.DataKind_bytes, tbl.Field("s2_2_2").DataKind())
+	require.Equal(appdef.DataKind_bytes, tbl.Field("s2_3_1").DataKind())
+	require.Equal(appdef.DataKind_bytes, tbl.Field("s2_3_2").DataKind())
+
+	// string
+	require.Equal(appdef.DataKind_string, tbl.Field("s1_1_1").DataKind())
+	require.Equal(appdef.DataKind_string, tbl.Field("s1_1_2").DataKind())
+	require.Equal(appdef.DataKind_string, tbl.Field("s1_2_1").DataKind())
+	require.Equal(appdef.DataKind_string, tbl.Field("s1_2_2").DataKind())
+	require.Equal(appdef.DataKind_string, tbl.Field("s1_3_1").DataKind())
+	require.Equal(appdef.DataKind_string, tbl.Field("s1_3_2").DataKind())
+
 }
 
 func Test_UniquesFromFieldsets(t *testing.T) {
@@ -2975,6 +3048,7 @@ func TestIsOperationAllowedOnNestedTable(t *testing.T) {
 	require := assertions(t)
 	schema, err := require.AppSchema(`APPLICATION test();
 		WORKSPACE MyWS (
+			DESCRIPTOR ();
 			TABLE Table2 INHERITS sys.CDoc(
 				Fld1 int32,
 				Nested TABLE Nested (
@@ -2997,8 +3071,8 @@ func TestIsOperationAllowedOnNestedTable(t *testing.T) {
 	cfgs := istructsmem.AppConfigsType{}
 	cfgs.AddAppConfig(appQName, 1, appDef, 1)
 	appStructsProvider := istructsmem.Provide(cfgs, irates.NullBucketsFactory,
-		payloads.ProvideIAppTokensFactory(itokensjwt.ProvideITokens(itokensjwt.SecretKeyExample, coreutils.MockTime)),
-		provider.Provide(mem.Provide(coreutils.MockTime)))
+		payloads.ProvideIAppTokensFactory(itokensjwt.ProvideITokens(itokensjwt.SecretKeyExample, testingu.MockTime)),
+		provider.Provide(mem.Provide(testingu.MockTime)), isequencer.SequencesTrustLevel_0)
 	statelessResources := istructsmem.NewStatelessResources()
 	appParts, cleanup, err := appparts.New2(context.Background(), appStructsProvider, appparts.NullSyncActualizerFactory, appparts.NullActualizerRunner, appparts.NullSchedulerRunner,
 		engines.ProvideExtEngineFactories(
@@ -3051,8 +3125,8 @@ func TestIsOperationAllowedOnGrantRoleToRole(t *testing.T) {
 	cfgs := istructsmem.AppConfigsType{}
 	cfgs.AddAppConfig(appQName, 1, appDef, 1)
 	appStructsProvider := istructsmem.Provide(cfgs, irates.NullBucketsFactory,
-		payloads.ProvideIAppTokensFactory(itokensjwt.ProvideITokens(itokensjwt.SecretKeyExample, coreutils.MockTime)),
-		provider.Provide(mem.Provide(coreutils.MockTime)))
+		payloads.ProvideIAppTokensFactory(itokensjwt.ProvideITokens(itokensjwt.SecretKeyExample, testingu.MockTime)),
+		provider.Provide(mem.Provide(testingu.MockTime)), isequencer.SequencesTrustLevel_0)
 	statelessResources := istructsmem.NewStatelessResources()
 	appParts, cleanup, err := appparts.New2(context.Background(), appStructsProvider, appparts.NullSyncActualizerFactory, appparts.NullActualizerRunner, appparts.NullSchedulerRunner,
 		engines.ProvideExtEngineFactories(

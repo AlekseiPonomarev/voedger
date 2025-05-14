@@ -9,12 +9,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/gorilla/mux"
 
@@ -28,10 +26,13 @@ import (
 func createBusRequest(reqMethod string, req *http.Request, rw http.ResponseWriter, numsAppsWorkspaces map[appdef.AppQName]istructs.NumAppWorkspaces) (res bus.Request, ok bool) {
 	vars := mux.Vars(req)
 	wsidStr := vars[URLPlaceholder_wsid]
-	wsidUint, err := strconv.ParseUint(wsidStr, utils.DecimalBase, utils.BitSize64)
-	if err != nil {
-		// notest: impossible because of regexp in a handler
-		panic(err)
+	var wsidUint uint64
+	var err error
+	if len(wsidStr) > 0 {
+		if wsidUint, err = strconv.ParseUint(wsidStr, utils.DecimalBase, utils.BitSize64); err != nil {
+			// notest: impossible because of regexp in a handler
+			panic(err)
+		}
 	}
 	appQNameStr := vars[URLPlaceholder_appOwner] + appdef.AppQNameQualifierChar + vars[URLPlaceholder_appName]
 	wsid := istructs.WSID(wsidUint)
@@ -55,7 +56,7 @@ func createBusRequest(reqMethod string, req *http.Request, rw http.ResponseWrite
 	if docIDStr, hasDocID := vars[URLPlaceholder_id]; hasDocID {
 		docIDUint64, err := strconv.ParseUint(docIDStr, utils.DecimalBase, utils.BitSize64)
 		if err != nil {
-			// notest: prased already by route regexp
+			// notest: parsed already by route regexp
 			panic(err)
 		}
 		res.DocID = istructs.IDType(docIDUint64)
@@ -161,11 +162,11 @@ func reply_v2(requestCtx context.Context, w http.ResponseWriter, responseCh <-ch
 		var sysError coreutils.SysError
 		if errors.As(*responseErr, &sysError) {
 			jsonErr := sysError.ToJSON_APIV2()
-			jsonErr = strings.TrimPrefix(jsonErr, "{")
-			jsonErr = strings.TrimSuffix(jsonErr, "}")
-			sendSuccess = writeResponse(w, jsonErr)
+			sendSuccess = writeResponse(w, `"error":`+jsonErr)
 		} else {
-			sendSuccess = writeResponse(w, fmt.Sprintf(`"error":{"status":%d,"message":"%s"}`, http.StatusInternalServerError, *responseErr))
+			if sendSuccess = writeResponse(w, `"error":`); sendSuccess {
+				sendSuccess = writeCommonError(w, (*responseErr).Error(), http.StatusInternalServerError)
+			}
 		}
 	}
 

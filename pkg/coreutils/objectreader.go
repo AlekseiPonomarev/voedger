@@ -22,6 +22,7 @@ func ReadByKind(name appdef.FieldName, kind appdef.DataKind, rr istructs.IRowRea
 		}
 	}()
 	switch kind {
+	// TODO: #3435 [small integers]
 	case appdef.DataKind_int32:
 		return rr.AsInt32(name)
 	case appdef.DataKind_int64:
@@ -37,7 +38,7 @@ func ReadByKind(name appdef.FieldName, kind appdef.DataKind, rr istructs.IRowRea
 	case appdef.DataKind_RecordID:
 		return rr.AsRecordID(name)
 	case appdef.DataKind_QName:
-		return rr.AsQName(name).String()
+		return rr.AsQName(name) // not .String(), see https://github.com/voedger/voedger/issues/3477
 	case appdef.DataKind_bool:
 		return rr.AsBool(name)
 	default:
@@ -202,6 +203,10 @@ func JSONMapToCUDBody(data []map[string]interface{}) string {
 func CheckValueByKind(val interface{}, kind appdef.DataKind) error {
 	ok := false
 	switch val.(type) {
+	case int8: // #3434 [small integers]
+		ok = kind == appdef.DataKind_int8
+	case int16: // #3434 [small integers]
+		ok = kind == appdef.DataKind_int16
 	case int32:
 		ok = kind == appdef.DataKind_int32
 	case int64:

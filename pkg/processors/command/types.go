@@ -19,6 +19,7 @@ import (
 	payloads "github.com/voedger/voedger/pkg/itokens-payloads"
 	imetrics "github.com/voedger/voedger/pkg/metrics"
 	"github.com/voedger/voedger/pkg/pipeline"
+	"github.com/voedger/voedger/pkg/processors"
 	"github.com/voedger/voedger/pkg/processors/actualizers"
 	"github.com/voedger/voedger/pkg/state"
 	"github.com/voedger/voedger/pkg/state/stateprovide"
@@ -38,9 +39,12 @@ type ICommandMessage interface {
 	Responder() bus.IResponder
 	PartitionID() istructs.PartitionID
 	RequestCtx() context.Context
-	QName() appdef.QName
+	QName() appdef.QName // APIv1 -> cmd QName, APIv2 -> cmdQName or DocQName
 	Token() string
 	Host() string
+	APIPath() processors.APIPath
+	DocID() istructs.RecordID
+	Method() string
 }
 
 type xPath string
@@ -68,7 +72,7 @@ type cmdWorkpiece struct {
 	pLogEvent                    istructs.IPLogEvent
 	appPartition                 *appPartition
 	workspace                    *workspace
-	idGenerator                  *implIDGenerator
+	idGeneratorReporter          *implIDGeneratorReporter
 	eca                          istructs.ExecCommandArgs
 	metrics                      commandProcessorMetrics
 	syncProjectorsStart          time.Time
@@ -84,9 +88,12 @@ type cmdWorkpiece struct {
 	iCommand                     appdef.ICommand
 	iWorkspace                   appdef.IWorkspace
 	appPartitionRestartScheduled bool
+	cmdQName                     appdef.QName
+	statusCodeOfSuccess          int
+	reapplier                    istructs.IEventReapplier
 }
 
-type implIDGenerator struct {
+type implIDGeneratorReporter struct {
 	istructs.IIDGenerator
 	generatedIDs map[istructs.RecordID]istructs.RecordID
 }
@@ -107,9 +114,12 @@ type implICommandMessage struct {
 	responder   bus.IResponder
 	partitionID istructs.PartitionID
 	requestCtx  context.Context
-	qName       appdef.QName
+	qName       appdef.QName // APIv1 -> cmd QName, APIv2 -> cmdQName or DocQName
 	token       string
 	host        string
+	apiPath     processors.APIPath
+	docID       istructs.RecordID
+	method      string
 }
 
 type wrongArgsCatcher struct {

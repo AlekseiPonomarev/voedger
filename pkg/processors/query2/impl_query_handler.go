@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"runtime/debug"
-	"time"
 
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/bus"
@@ -17,37 +16,21 @@ import (
 	"github.com/voedger/voedger/pkg/istructs"
 	"github.com/voedger/voedger/pkg/istructsmem"
 	"github.com/voedger/voedger/pkg/pipeline"
-	queryprocessor "github.com/voedger/voedger/pkg/processors/query"
 )
 
-type queryHandler struct {
-}
-
-var _ IApiPathHandler = (*queryHandler)(nil) // ensure that queryHandler implements IApiPathHandler
-
-func (h *queryHandler) CheckRateLimit(ctx context.Context, qw *queryWork) error {
-	if qw.appStructs.IsFunctionRateLimitsExceeded(qw.msg.QName(), qw.msg.WSID()) {
-		return coreutils.NewSysError(http.StatusTooManyRequests)
+func queryHandler() apiPathHandler {
+	return apiPathHandler{
+		isArrayResult:   true,
+		requestOpKind:   appdef.OperationKind_Execute,
+		checkRateLimit:  queryRateLimitExceeded,
+		setRequestType:  querySetRequestType,
+		setResultType:   querySetResultType,
+		authorizeResult: queryAuthorizeResult,
+		rowsProcessor:   queryRowsProcessor,
+		exec:            queryExec,
 	}
-	return nil
 }
-
-func (h *queryHandler) SetRequestType(ctx context.Context, qw *queryWork) error {
-	switch qw.iWorkspace {
-	case nil:
-		// workspace is dummy
-		if qw.iQuery = appdef.Query(qw.appStructs.AppDef().Type, qw.msg.QName()); qw.iQuery == nil {
-			return coreutils.NewHTTPErrorf(http.StatusBadRequest, fmt.Sprintf("query %s does not exist", qw.msg.QName()))
-		}
-	default:
-		if qw.iQuery = appdef.Query(qw.iWorkspace.Type, qw.msg.QName()); qw.iQuery == nil {
-			return coreutils.NewHTTPErrorf(http.StatusBadRequest, fmt.Sprintf("query %s does not exist in %v", qw.msg.QName(), qw.iWorkspace))
-		}
-	}
-	return nil
-}
-
-func (h *queryHandler) SetResultType(ctx context.Context, qw *queryWork, statelessResources istructsmem.IStatelessResources) error {
+func querySetResultType(ctx context.Context, qw *queryWork, statelessResources istructsmem.IStatelessResources) error {
 	qw.resultType = qw.iQuery.Result()
 	if qw.resultType == nil || qw.resultType.QName() != appdef.QNameANY {
 		return nil
@@ -68,37 +51,32 @@ func (h *queryHandler) SetResultType(ctx context.Context, qw *queryWork, statele
 	qNameResultType := iQueryFunc.ResultType(qw.execQueryArgs.PrepareArgs)
 
 	ws := qw.iWorkspace
-	if ws == nil {
-		// workspace is dummy
-		ws = qw.iQuery.Workspace()
-	}
 	qw.resultType = ws.Type(qNameResultType)
 	if qw.resultType.Kind() == appdef.TypeKind_null {
 		return coreutils.NewHTTPError(http.StatusBadRequest, fmt.Errorf("%s query result type %s does not exist in %v", qw.iQuery.QName(), qNameResultType, ws))
 	}
 	return nil
 }
-
-func (h *queryHandler) RequestOpKind() appdef.OperationKind {
-	return appdef.OperationKind_Execute
-}
-
-func (h *queryHandler) AuthorizeResult(ctx context.Context, qw *queryWork) error {
+func queryAuthorizeResult(ctx context.Context, qw *queryWork) error {
 	// the entire result is allowed if execute on query is granted
 	return nil
 }
-
-func (h *queryHandler) RowsProcessor(ctx context.Context, qw *queryWork) (err error) {
+func queryRowsProcessor(ctx context.Context, qw *queryWork) (err error) {
+	result := qw.appStructs.AppDef().Type(qw.iQuery.QName()).(appdef.IQuery).Result()
+	if result == nil {
+		return nil
+	}
 	oo := make([]*pipeline.WiredOperator, 0)
 	if qw.queryParams.Constraints != nil && len(qw.queryParams.Constraints.Include) != 0 {
-		oo = append(oo, pipeline.WireAsyncOperator("Include", newInclude(qw)))
+		oo = append(oo, pipeline.WireAsyncOperator("Include", newInclude(qw, false)))
 	}
 	if qw.queryParams.Constraints != nil && (len(qw.queryParams.Constraints.Order) != 0 || qw.queryParams.Constraints.Skip > 0 || qw.queryParams.Constraints.Limit > 0) {
 		oo = append(oo, pipeline.WireAsyncOperator("Aggregator", newAggregator(qw.queryParams)))
 	}
-	o, err := newFilter(qw, qw.appStructs.AppDef().Type(qw.appStructs.AppDef().Type(qw.iQuery.QName()).(appdef.IQuery).Result().QName()).(appdef.IWithFields).Fields())
+	resultType := qw.appStructs.AppDef().Type(result.QName())
+	o, err := newFilter(qw, resultType.(appdef.IWithFields).Fields())
 	if err != nil {
-		return
+		return err
 	}
 	if o != nil {
 		oo = append(oo, pipeline.WireAsyncOperator("Filter", o))
@@ -106,7 +84,7 @@ func (h *queryHandler) RowsProcessor(ctx context.Context, qw *queryWork) (err er
 	if qw.queryParams.Constraints != nil && len(qw.queryParams.Constraints.Keys) != 0 {
 		oo = append(oo, pipeline.WireAsyncOperator("Keys", newKeys(qw.queryParams.Constraints.Keys)))
 	}
-	sender := &sender{responder: qw.msg.Responder()}
+	sender := &sender{responder: qw.msg.Responder(), isArrayResponse: true}
 	oo = append(oo, pipeline.WireAsyncOperator("Sender", sender))
 	qw.rowsProcessor = pipeline.NewAsyncPipeline(ctx, "View rows processor", oo[0], oo[1:]...)
 	qw.responseWriterGetter = func() bus.IResponseWriter {
@@ -114,15 +92,12 @@ func (h *queryHandler) RowsProcessor(ctx context.Context, qw *queryWork) (err er
 	}
 	return
 }
-
-func (h *queryHandler) Exec(ctx context.Context, qw *queryWork) (err error) {
-	now := time.Now()
+func queryExec(ctx context.Context, qw *queryWork) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			stack := string(debug.Stack())
 			err = fmt.Errorf("%v\n%s", r, stack)
 		}
-		qw.metrics.Increase(queryprocessor.Metric_ExecSeconds, time.Since(now).Seconds())
 	}()
 	return qw.appPart.Invoke(ctx, qw.msg.QName(), qw.state, qw.state)
 }

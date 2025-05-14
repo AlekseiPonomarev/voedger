@@ -16,6 +16,7 @@ import (
 	"github.com/voedger/voedger/pkg/appdef/builder"
 	log "github.com/voedger/voedger/pkg/goutils/logger"
 	"github.com/voedger/voedger/pkg/goutils/testingu/require"
+	"github.com/voedger/voedger/pkg/isequencer"
 
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/iratesce"
@@ -73,7 +74,7 @@ func testEventBuilderCore(t *testing.T, cachedPLog bool) {
 
 			cmd.PutRecordID(appdef.SystemField_ID, test.tempSaleID)
 			cmd.PutString(test.buyerIdent, test.buyerValue)
-			cmd.PutInt32(test.ageIdent, test.ageValue)
+			cmd.PutInt8(test.ageIdent, test.ageValue)
 			cmd.PutFloat32(test.heightIdent, test.heightValue)
 			cmd.PutBool(test.humanIdent, test.humanValue)
 			cmd.PutBytes(test.photoIdent, test.photoValue)
@@ -105,7 +106,7 @@ func testEventBuilderCore(t *testing.T, cachedPLog bool) {
 			rec := cuds.Create(test.tablePhotos)
 			rec.PutRecordID(appdef.SystemField_ID, test.tempPhotoID)
 			rec.PutString(test.buyerIdent, test.buyerValue)
-			rec.PutInt32(test.ageIdent, test.ageValue)
+			rec.PutInt8(test.ageIdent, test.ageValue)
 			rec.PutFloat32(test.heightIdent, test.heightValue)
 			rec.PutBool(test.humanIdent, true)
 			rec.PutBytes(test.photoIdent, test.photoValue)
@@ -128,26 +129,20 @@ func testEventBuilderCore(t *testing.T, cachedPLog bool) {
 
 	t.Run("II. Save raw event to PLog & WLog and save Docs and CUDs demo", func(t *testing.T) {
 		// 1. save to PLog
-		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, buildErr, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID, t appdef.IType) error {
+		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, buildErr, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID) error {
 			require.True(rawID.IsRaw())
 			switch rawID {
 			case test.tempPhotoID:
-				require.Equal(test.tablePhotos, t.QName())
 				photoID = storageID
 			case test.tempRemarkID:
-				require.Equal(test.tablePhotoRems, t.QName())
 				remarkID = storageID
 			case test.tempSaleID:
-				require.Equal(test.saleCmdDocName, t.QName())
 				saleID = storageID
 			case test.tempBasketID:
-				require.Equal(appdef.NewQName(test.pkgName, test.basketIdent), t.QName())
 				basketID = storageID
 			case test.tempGoodsID[0]:
-				require.Equal(appdef.NewQName(test.pkgName, test.goodIdent), t.QName())
 				goodsID[0] = storageID
 			case test.tempGoodsID[1]:
-				require.Equal(appdef.NewQName(test.pkgName, test.goodIdent), t.QName())
 				goodsID[1] = storageID
 			}
 			return nil
@@ -162,7 +157,7 @@ func testEventBuilderCore(t *testing.T, cachedPLog bool) {
 		require.False(goodsID[1].IsRaw())
 		defer pLogEvent.Release()
 
-		testDbEvent(t, pLogEvent)
+		testDBEvent(t, pLogEvent)
 		require.Equal(test.workspace, pLogEvent.Workspace())
 		require.Equal(test.wlogOfs, pLogEvent.WLogOffset())
 
@@ -199,7 +194,7 @@ func testEventBuilderCore(t *testing.T, cachedPLog bool) {
 				require.NoError(err)
 				require.NotNil(event)
 
-				testDbEvent(t, event)
+				testDBEvent(t, event)
 				require.Equal(test.workspace, event.Workspace())
 				require.Equal(test.wlogOfs, event.WLogOffset())
 
@@ -283,7 +278,7 @@ func testEventBuilderCore(t *testing.T, cachedPLog bool) {
 				require.NoError(err)
 				require.NotNil(event)
 				defer event.Release()
-				testDbEvent(t, event)
+				testDBEvent(t, event)
 			})
 
 			t.Run("test sequential reading", func(t *testing.T) {
@@ -298,7 +293,7 @@ func testEventBuilderCore(t *testing.T, cachedPLog bool) {
 				require.NoError(err)
 				require.NotNil(event)
 				defer event.Release()
-				testDbEvent(t, event)
+				testDBEvent(t, event)
 			})
 		})
 
@@ -353,9 +348,9 @@ func testEventBuilderCore(t *testing.T, cachedPLog bool) {
 	})
 
 	var (
-		changedHeights float32 = test.heightValue + 0.1
-		changedPhoto           = []byte{10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
-		changedRems    string  = "changes"
+		changedHeights = test.heightValue + 0.1
+		changedPhoto   = []byte{10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+		changedRems    = "changes"
 	)
 
 	t.Run("VI. Build change event", func(t *testing.T) {
@@ -513,7 +508,7 @@ func testEventBuilderCore(t *testing.T, cachedPLog bool) {
 			require.Equal(test.tablePhotos, rec.QName())
 
 			require.Equal(test.buyerValue, rec.AsString(test.buyerIdent))
-			require.Equal(test.ageValue, rec.AsInt32(test.ageIdent))
+			require.Equal(test.ageValue, rec.AsInt8(test.ageIdent))
 
 			require.Equal(changedHeights, rec.AsFloat32(test.heightIdent))
 			require.Equal(changedPhoto, rec.AsBytes(test.photoIdent))
@@ -610,7 +605,7 @@ func testEventBuilderCore(t *testing.T, cachedPLog bool) {
 			require.Equal(test.tablePhotos, rec.QName())
 
 			require.Equal(test.buyerValue, rec.AsString(test.buyerIdent))
-			require.Equal(test.ageValue, rec.AsInt32(test.ageIdent))
+			require.Equal(test.ageValue, rec.AsInt8(test.ageIdent))
 			require.Equal(changedHeights, rec.AsFloat32(test.heightIdent))
 			require.Equal(changedPhoto, rec.AsBytes(test.photoIdent))
 
@@ -627,7 +622,7 @@ func testCommandsTree(t *testing.T, cmd istructs.IObject) {
 		require.NotNil(cmd)
 
 		require.Equal(test.buyerValue, cmd.AsString(test.buyerIdent))
-		require.Equal(test.ageValue, cmd.AsInt32(test.ageIdent))
+		require.Equal(test.ageValue, cmd.AsInt8(test.ageIdent))
 		require.Equal(test.heightValue, cmd.AsFloat32(test.heightIdent))
 		require.Equal(test.photoValue, cmd.AsBytes(test.photoIdent))
 
@@ -698,12 +693,12 @@ func testPhotoRow(t *testing.T, photo istructs.IRowReader) {
 	require := require.New(t)
 	test := test()
 	require.Equal(test.buyerValue, photo.AsString(test.buyerIdent))
-	require.Equal(test.ageValue, photo.AsInt32(test.ageIdent))
+	require.Equal(test.ageValue, photo.AsInt8(test.ageIdent))
 	require.Equal(test.heightValue, photo.AsFloat32(test.heightIdent))
 	require.Equal(test.photoValue, photo.AsBytes(test.photoIdent))
 }
 
-func testDbEvent(t *testing.T, event istructs.IDbEvent) {
+func testDBEvent(t *testing.T, event istructs.IDbEvent) {
 	require := require.New(t)
 	test := test()
 
@@ -750,6 +745,9 @@ func Test_EventUpdateRawCud(t *testing.T) {
 
 	t.Run("should be ok to construct application", func(t *testing.T) {
 		ws := adb.AddWorkspace(wsName)
+		wsDescQName := appdef.NewQName("test", "WSDesc")
+		ws.AddCDoc(wsDescQName)
+		ws.SetDescriptor(wsDescQName)
 
 		doc := ws.AddCDoc(docName)
 		doc.AddField("new", appdef.DataKind_bool, true)
@@ -775,14 +773,12 @@ func Test_EventUpdateRawCud(t *testing.T) {
 		testCount
 	)
 
-	provider := Provide(cfgs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider())
+	provider := Provide(cfgs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider(), isequencer.SequencesTrustLevel_0)
 
 	ws := istructs.WSID(1)
 
-	expectedQName := docName
-	idGenerator := NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID, t appdef.IType) error {
+	idGenerator := NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID) error {
 		require.EqualValues(1, rawID)
-		require.EqualValues(expectedQName, t.QName())
 		return nil
 	})
 
@@ -791,7 +787,7 @@ func Test_EventUpdateRawCud(t *testing.T) {
 		app, err := provider.BuiltIn(appName)
 		require.NoError(err)
 
-		docID := istructs.NewCDocCRecordID(istructs.FirstBaseRecordID + istructs.RecordID(test))
+		docID := istructs.FirstUserRecordID + istructs.RecordID(test)
 
 		t.Run("should be ok to create CDoc", func(t *testing.T) {
 			bld := app.Events().GetNewRawEventBuilder(
@@ -815,7 +811,6 @@ func Test_EventUpdateRawCud(t *testing.T) {
 			require.NoError(err)
 			require.NotNil(rawEvent)
 
-			expectedQName = docName
 			pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, idGenerator)
 			require.NotNil(pLogEvent)
 			require.NoError(saveErr)
@@ -868,7 +863,6 @@ func Test_EventUpdateRawCud(t *testing.T) {
 			require.NoError(err)
 			require.NotNil(rawEvent)
 
-			expectedQName = recName
 			pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, idGenerator)
 			require.NotNil(pLogEvent)
 			require.NoError(saveErr)
@@ -936,6 +930,9 @@ func Test_UpdateCorrupted(t *testing.T) {
 
 	t.Run("should be ok to build AppDef", func(t *testing.T) {
 		ws := adb.AddWorkspace(wsName)
+		wsDescQName := appdef.NewQName("test", "WSDesc")
+		ws.AddCDoc(wsDescQName)
+		ws.SetDescriptor(wsDescQName)
 		doc := ws.AddCDoc(docName)
 		doc.SetSingleton()
 		doc.AddField("option", appdef.DataKind_int64, true)
@@ -950,7 +947,7 @@ func Test_UpdateCorrupted(t *testing.T) {
 		return cfgs
 	}()
 
-	provider := Provide(cfgs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider())
+	provider := Provide(cfgs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider(), isequencer.SequencesTrustLevel_0)
 
 	app, err := provider.BuiltIn(appName)
 	require.NoError(err)
@@ -976,7 +973,7 @@ func Test_UpdateCorrupted(t *testing.T) {
 		require.NoError(err)
 		require.NotNil(rawEvent)
 
-		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID, t appdef.IType) error {
+		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID) error {
 			return errors.New("unexpected call ID generator from singleton CDoc creation")
 		}))
 		require.NotNil(pLogEvent)
@@ -1027,7 +1024,7 @@ func Test_UpdateCorrupted(t *testing.T) {
 		require.NoError(err)
 		require.NotNil(rawEvent)
 
-		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID, t appdef.IType) error {
+		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID) error {
 			return errors.New("unexpected call ID generator from update corrupted event")
 		}))
 		require.NotNil(pLogEvent)
@@ -1070,6 +1067,9 @@ func Test_BuildPLogEvent(t *testing.T) {
 
 	t.Run("should be ok to build AppDef", func(t *testing.T) {
 		ws := adb.AddWorkspace(wsName)
+		wsDescQName := appdef.NewQName("test", "WSDesc")
+		ws.AddCDoc(wsDescQName)
+		ws.SetDescriptor(wsDescQName)
 		doc := ws.AddCDoc(docName)
 		doc.SetSingleton()
 		doc.AddField("option", appdef.DataKind_int64, true)
@@ -1084,7 +1084,7 @@ func Test_BuildPLogEvent(t *testing.T) {
 		return cfgs
 	}()
 
-	provider := Provide(cfgs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider())
+	provider := Provide(cfgs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider(), isequencer.SequencesTrustLevel_0)
 
 	app, err := provider.BuiltIn(appName)
 	require.NoError(err)
@@ -1110,7 +1110,7 @@ func Test_BuildPLogEvent(t *testing.T) {
 		require.NoError(err)
 		require.NotNil(rawEvent)
 
-		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID, t appdef.IType) error {
+		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID) error {
 			return errors.New("unexpected call ID generator from singleton CDoc creation")
 		}))
 		require.NotNil(pLogEvent)
@@ -1269,6 +1269,9 @@ func Test_SingletonCDocEvent(t *testing.T) {
 
 	t.Run("should be ok to construct singleton CDoc", func(t *testing.T) {
 		ws := adb.AddWorkspace(wsName)
+		wsDescQName := appdef.NewQName("test", "WSDesc")
+		ws.AddCDoc(wsDescQName)
+		ws.SetDescriptor(wsDescQName)
 
 		doc := ws.AddCDoc(docName)
 		doc.SetSingleton()
@@ -1286,7 +1289,7 @@ func Test_SingletonCDocEvent(t *testing.T) {
 		return cfgs
 	}()
 
-	provider := Provide(cfgs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider())
+	provider := Provide(cfgs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider(), isequencer.SequencesTrustLevel_0)
 
 	app, err := provider.BuiltIn(appName)
 	require.NoError(err)
@@ -1322,7 +1325,7 @@ func Test_SingletonCDocEvent(t *testing.T) {
 		require.NoError(err)
 		require.NotNil(rawEvent)
 
-		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID, t appdef.IType) error {
+		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID) error {
 			return errors.New("unexpected call ID generator from singleton CDoc creation")
 		}))
 		require.NotNil(pLogEvent)
@@ -1389,7 +1392,7 @@ func Test_SingletonCDocEvent(t *testing.T) {
 		require.NotNil(rawEvent)
 		require.Error(buildErr, require.Is(ErrRecordIDUniqueViolationError), require.Has(cud))
 
-		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, buildErr, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID, t appdef.IType) error {
+		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, buildErr, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID) error {
 			return errors.New("unexpected call ID generator from singleton CDoc creation")
 		}))
 		require.NotNil(pLogEvent)
@@ -1453,7 +1456,7 @@ func Test_SingletonCDocEvent(t *testing.T) {
 		require.NoError(err)
 		require.NotNil(rawEvent)
 
-		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID, t appdef.IType) error {
+		pLogEvent, saveErr := app.Events().PutPlog(rawEvent, err, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID) error {
 			return errors.New("unexpected call ID generator while singleton CDoc update")
 		}))
 		require.NotNil(pLogEvent)
@@ -1497,7 +1500,7 @@ func TestEventBuild_Error(t *testing.T) {
 	require := require.New(t)
 	test := test()
 
-	provider := Provide(test.AppConfigs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider())
+	provider := Provide(test.AppConfigs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider(), isequencer.SequencesTrustLevel_0)
 
 	app, err := provider.BuiltIn(test.appName)
 	require.NoError(err)
@@ -1747,9 +1750,8 @@ func TestEventBuild_Error(t *testing.T) {
 			require.NoError(buildErr)
 			require.NotNil(rawEvent)
 
-			pLogEvent, saveErr := app.Events().PutPlog(rawEvent, buildErr, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID, t appdef.IType) error {
+			pLogEvent, saveErr := app.Events().PutPlog(rawEvent, buildErr, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID) error {
 				if rawID == test.tempBasketID {
-					require.Equal(appdef.NewQName(test.pkgName, test.basketIdent), t.QName())
 					return ErrWrongRecordID("test error")
 				}
 				return nil
@@ -1758,6 +1760,7 @@ func TestEventBuild_Error(t *testing.T) {
 			require.Contains(pLogEvent.Error().ErrStr(), ErrWrongRecordIDError.Error())
 			require.NoError(saveErr)
 			require.NotNil(pLogEvent)
+			test.plogOfs++
 		})
 
 		t.Run("Error in Generate CUD ID", func(t *testing.T) {
@@ -1778,9 +1781,8 @@ func TestEventBuild_Error(t *testing.T) {
 			require.NoError(buildErr)
 			require.NotNil(rawEvent)
 
-			pLogEvent, saveErr := app.Events().PutPlog(rawEvent, buildErr, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID, t appdef.IType) error {
+			pLogEvent, saveErr := app.Events().PutPlog(rawEvent, buildErr, NewIDGeneratorWithHook(func(rawID, storageID istructs.RecordID) error {
 				if rawID == 7 {
-					require.Equal(test.tablePhotoRems, t.QName())
 					return ErrWrongRecordID("test error")
 				}
 				return nil
@@ -1789,6 +1791,7 @@ func TestEventBuild_Error(t *testing.T) {
 			require.Contains(pLogEvent.Error().ErrStr(), ErrWrongRecordIDError.Error())
 			require.NoError(saveErr)
 			require.NotNil(pLogEvent)
+			test.plogOfs++
 
 			require.Panics(
 				func() {
@@ -1803,7 +1806,7 @@ func Test_LoadStoreEvent_Bytes(t *testing.T) {
 	require := require.New(t)
 
 	ev1 := newTestEvent(100500, 500)
-	testDbEvent(t, ev1)
+	testDBEvent(t, ev1)
 
 	ev1.argUnlObj.maskValues()
 
@@ -1816,7 +1819,7 @@ func Test_LoadStoreEvent_Bytes(t *testing.T) {
 	require.Equal(istructs.Offset(100500), ev2.pLogOffs)
 	require.Equal(istructs.Offset(500), ev2.wLogOffs)
 
-	testDbEvent(t, ev2)
+	testDBEvent(t, ev2)
 	testUnloggedObject(t, ev2.ArgumentUnloggedObject())
 
 	// #2785
@@ -1832,7 +1835,7 @@ func Test_LoadStoreEvent_Bytes(t *testing.T) {
 			cud.PutRecordID(appdef.SystemField_ID, emptiedPhotoID)
 			cud.PutString(test.buyerIdent, "") // empty here, but next filled
 			cud.PutString(test.buyerIdent, test.buyerValue)
-			cud.PutInt32(test.ageIdent, test.ageValue)
+			cud.PutInt8(test.ageIdent, test.ageValue)
 			cud.PutBytes(test.photoIdent, nil) // empty bytes-field
 		})
 
@@ -1855,12 +1858,12 @@ func Test_LoadStoreEvent_Bytes(t *testing.T) {
 			for cud := range ev2.CUDs {
 				switch cud.AsRecordID(appdef.SystemField_ID) {
 				case emptiedPhotoID:
-					fields := make(map[appdef.FieldName]interface{})
+					fields := make(map[appdef.FieldName]any)
 					for fld, val := range cud.SpecifiedValues {
 						fields[fld.Name()] = val
 					}
 					require.Equal(
-						map[appdef.FieldName]interface{}{
+						map[appdef.FieldName]any{
 							test.buyerIdent:             test.buyerValue,
 							test.ageIdent:               test.ageValue,
 							test.photoIdent:             []byte{}, // emptied bytes-field
@@ -1870,12 +1873,12 @@ func Test_LoadStoreEvent_Bytes(t *testing.T) {
 						},
 						fields)
 				case emptiedRemarkID:
-					fields := make(map[appdef.FieldName]interface{})
+					fields := make(map[appdef.FieldName]any)
 					for fld, val := range cud.SpecifiedValues {
 						fields[fld.Name()] = val
 					}
 					require.Equal(
-						map[appdef.FieldName]interface{}{
+						map[appdef.FieldName]any{
 							test.photoIdent:              test.tempPhotoID,
 							test.remarkIdent:             "", // emptied string-field
 							appdef.SystemField_ID:        emptiedRemarkID,
@@ -1953,7 +1956,7 @@ func Test_LoadStoreErrEvent_Bytes(t *testing.T) {
 	require := require.New(t)
 	test := test()
 
-	provider := Provide(test.AppConfigs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider())
+	provider := Provide(test.AppConfigs, iratesce.TestBucketsFactory, testTokensFactory(), simpleStorageProvider(), isequencer.SequencesTrustLevel_0)
 
 	app, err := provider.BuiltIn(test.appName)
 	require.NoError(err)
@@ -2087,8 +2090,8 @@ func Test_ObjectMask(t *testing.T) {
 	value.maskValues()
 
 	require.Equal(maskString, value.AsString(test.buyerIdent))
-	require.Equal(int32(0), value.AsInt32(test.ageIdent))
-	require.Equal(float32(0), value.AsFloat32(test.heightIdent))
+	require.Zero(value.AsInt8(test.ageIdent))
+	require.Zero(value.AsFloat32(test.heightIdent))
 	require.False(value.AsBool(test.humanIdent))
 	require.Equal([]byte(nil), value.AsBytes(test.photoIdent))
 

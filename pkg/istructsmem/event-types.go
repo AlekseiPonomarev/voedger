@@ -16,7 +16,6 @@ import (
 
 	"github.com/voedger/voedger/pkg/appdef"
 	"github.com/voedger/voedger/pkg/istructs"
-	"github.com/voedger/voedger/pkg/istructsmem/internal/qnames"
 	"github.com/voedger/voedger/pkg/istructsmem/internal/utils"
 	"github.com/voedger/voedger/pkg/objcache"
 )
@@ -56,6 +55,9 @@ type eventType struct {
 
 	// cache supports
 	objcache.RefCounter
+
+	// read from db -> true, event is created by Builder -> false
+	isStored bool
 }
 
 // Returns new empty event
@@ -177,12 +179,12 @@ func (ev *eventType) loadFromBytes(in []byte) (err error) {
 }
 
 // Retrieves ID for event command name
-func (ev *eventType) qNameID() (id qnames.QNameID) {
+func (ev *eventType) QNameID() (id istructs.QNameID) {
 	if id, err := ev.appCfg.qNames.ID(ev.QName()); err == nil {
 		return id
 	}
 	// no test
-	return qnames.QNameIDForError
+	return istructs.QNameIDForError
 }
 
 // Regenerates all raw IDs in event arguments and CUDs using specified generator
@@ -471,7 +473,7 @@ func (cud *cudType) regenerateIDsPlan(generator istructs.IIDGenerator) (newIDs n
 		id := rec.ID()
 		if !id.IsRaw() {
 			// storage IDs are allowed for sync events
-			generator.UpdateOnSync(id, rec.typ)
+			generator.UpdateOnSync(id)
 			continue
 		}
 
@@ -482,7 +484,7 @@ func (cud *cudType) regenerateIDsPlan(generator istructs.IIDGenerator) (newIDs n
 				return nil, err
 			}
 		} else {
-			if storeID, err = generator.NextID(id, rec.typ); err != nil {
+			if storeID, err = generator.NextID(id); err != nil {
 				return nil, err
 			}
 		}
@@ -769,7 +771,7 @@ func (o *objectType) regenerateIDs(generator istructs.IIDGenerator) (err error) 
 	err = o.forEach(
 		func(c *objectType) error {
 			if id := c.ID(); id.IsRaw() {
-				storeID, err := generator.NextID(id, c.typ)
+				storeID, err := generator.NextID(id)
 				if err != nil {
 					return err
 				}
@@ -944,7 +946,6 @@ func (o *objectType) QName() appdef.QName {
 func (o *objectType) AsRecord() istructs.IRecord {
 	return o
 }
-
 
 // Implements interfaces:
 //

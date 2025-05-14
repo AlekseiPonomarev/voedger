@@ -20,7 +20,6 @@ import (
 
 	"github.com/voedger/voedger/pkg/in10n"
 	"github.com/voedger/voedger/pkg/in10nmem"
-	in10nmemv1 "github.com/voedger/voedger/pkg/in10nmem/v1"
 	"github.com/voedger/voedger/pkg/istructs"
 )
 
@@ -114,9 +113,9 @@ func (s *httpService) subscribeAndWatchHandler() http.HandlerFunc {
 
 func n10nErrorToStatusCode(err error) int {
 	switch {
-	case errors.Is(err, in10n.ErrChannelDoesNotExist), errors.Is(err, in10nmemv1.ErrMetricDoesNotExists):
+	case errors.Is(err, in10n.ErrChannelDoesNotExist), errors.Is(err, in10nmem.ErrMetricDoesNotExists):
 		return http.StatusBadRequest
-	case errors.Is(err, in10n.ErrQuotaExceeded_Subsciptions), errors.Is(err, in10n.ErrQuotaExceeded_SubsciptionsPerSubject),
+	case errors.Is(err, in10n.ErrQuotaExceeded_Subscriptions), errors.Is(err, in10n.ErrQuotaExceeded_SubscriptionsPerSubject),
 		errors.Is(err, in10n.ErrQuotaExceeded_Channels), errors.Is(err, in10n.ErrQuotaExceeded_ChannelsPerSubject):
 		return http.StatusTooManyRequests
 	}
@@ -129,7 +128,7 @@ curl -G --data-urlencode "payload={\"Channel\": \"a23b2050-b90c-4ed1-adb7-1ecc4f
 func (s *httpService) subscribeHandler() http.HandlerFunc {
 	return func(rw http.ResponseWriter, req *http.Request) {
 		var parameters subscriberParamsType
-		err := getJsonPayload(req, &parameters)
+		err := getJSONPayload(req, &parameters)
 		if err != nil {
 			http.Error(rw, err.Error(), http.StatusBadRequest)
 		}
@@ -151,7 +150,7 @@ curl -G --data-urlencode "payload={\"Channel\": \"a23b2050-b90c-4ed1-adb7-1ecc4f
 func (s *httpService) unSubscribeHandler() http.HandlerFunc {
 	return func(rw http.ResponseWriter, req *http.Request) {
 		var parameters subscriberParamsType
-		err := getJsonPayload(req, &parameters)
+		err := getJSONPayload(req, &parameters)
 		if err != nil {
 			http.Error(rw, err.Error(), http.StatusBadRequest)
 		}
@@ -193,7 +192,7 @@ func (s *httpService) updateHandler() http.HandlerFunc {
 	}
 }
 
-func getJsonPayload(req *http.Request, payload *subscriberParamsType) (err error) {
+func getJSONPayload(req *http.Request, payload *subscriberParamsType) (err error) {
 	jsonParam, ok := req.URL.Query()["payload"]
 	if !ok || len(jsonParam[0]) < 1 {
 		err = errors.New("url parameter with payload (channel id and projection key) is missing")
