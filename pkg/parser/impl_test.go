@@ -2373,6 +2373,67 @@ func Test_Grants(t *testing.T) {
 		require.Equal(1, numACLs)
 	})
 
+	t.Run("Grant ops with different fields", func(t *testing.T) {
+		schema, err := require.AppSchema(`APPLICATION test();
+			WORKSPACE W (
+				ROLE role;
+				TABLE t INHERITS sys.CDoc(
+					number int32,
+					name varchar
+				);
+				GRANT 
+					SELECT(sys.ID, number, name),
+					UPDATE(number, name)
+				ON TABLE t TO role;
+			);
+		`)
+		require.NoError(err)
+		builder := builder.New()
+		require.NoError(BuildAppDefs(schema, builder))
+		app, err := builder.Build()
+		require.NoError(err)
+
+		t.Log(app.ACL())
+		require.Len(app.ACL(), 2)
+		for _, acl := range app.ACL() {
+			require.Equal(appdef.PolicyKind_Allow, acl.Policy())
+			require.Equal("pkg.role", acl.Principal().QName().String())
+			if acl.Ops()[0] == appdef.OperationKind_Select {
+				require.EqualValues([]appdef.OperationKind{appdef.OperationKind_Select}, acl.Ops())
+				require.EqualValues([]string{"sys.ID", "number", "name"}, acl.Filter().Fields())
+			} else {
+				require.EqualValues([]appdef.OperationKind{appdef.OperationKind_Update}, acl.Ops())
+				require.EqualValues([]string{"number", "name"}, acl.Filter().Fields())
+			}
+		}
+	})
+
+	t.Run("Grant all with fields", func(t *testing.T) {
+		schema, err := require.AppSchema(`APPLICATION test();
+			WORKSPACE W (
+				ROLE role;
+				TABLE t INHERITS sys.CDoc(
+					number int32,
+					name varchar
+				);
+				GRANT ALL(number, name) ON TABLE t TO role;
+			);
+		`)
+		require.NoError(err)
+		builder := builder.New()
+		require.NoError(BuildAppDefs(schema, builder))
+		app, err := builder.Build()
+		require.NoError(err)
+
+		t.Log(app.ACL())
+		require.Len(app.ACL(), 1)
+		for _, acl := range app.ACL() {
+			require.Equal(appdef.PolicyKind_Allow, acl.Policy())
+			require.Equal("pkg.role", acl.Principal().QName().String())
+			require.EqualValues([]appdef.OperationKind{appdef.OperationKind_Insert, appdef.OperationKind_Update, appdef.OperationKind_Select}, acl.Ops())
+			require.EqualValues([]string{"number", "name"}, acl.Filter().Fields())
+		}
+	})
 }
 
 func Test_Grants_Inherit(t *testing.T) {
@@ -2911,7 +2972,13 @@ ALTER WORKSPACE sys.AppWorkspaceWS (
 	require.Equal(appdef.DataKind_QName, tbl.Field("s10_2").DataKind())
 
 	// blob
-	require.Equal(appdef.DataKind_RecordID, tbl.Field("s9_1").DataKind())
+	b1field := tbl.Field("s9_1")
+	require.Equal(appdef.DataKind_RecordID, b1field.DataKind())
+
+	b1RefField, ok := b1field.(appdef.IRefField)
+	require.True(ok)
+	require.True(b1RefField.Ref(QNameWDocBLOB))
+
 	require.Equal(appdef.DataKind_RecordID, tbl.Field("s9_2").DataKind())
 
 	// bool
@@ -3148,4 +3215,48 @@ func TestIsOperationAllowedOnGrantRoleToRole(t *testing.T) {
 		[]appdef.QName{appdef.NewQName("pkg", "Role1")})
 	require.NoError(err)
 	require.True(ok)
+}
+
+func Test_NotAllowedTypes(t *testing.T) {
+
+	require := assertions(t)
+
+	t.Run("BLOB in VIEWs not allowed", func(t *testing.T) {
+		require.AppSchemaError(`APPLICATION test();
+			WORKSPACE MyWS (
+				VIEW v1(
+					f1 int32,
+					f2 binary large object,
+					PRIMARY KEY(f1)
+				) AS RESULT OF p;
+
+				EXTENSION ENGINE BUILTIN (
+					PROJECTOR p AFTER EXECUTE ON c INTENTS (sys.View(v1));
+					COMMAND c();
+				);
+			);`, "file.vsql:5:9: BLOB field only allowed in table")
+	})
+
+	t.Run("BLOB in TYPEs not allowed", func(t *testing.T) {
+		require.AppSchemaError(`APPLICATION test();
+			WORKSPACE MyWS (
+				TYPE t1(
+					f1 int32,
+					f2 binary large object
+				);
+			);`, "file.vsql:5:9: BLOB field only allowed in table")
+	})
+
+	t.Run("Reference from CDoc to WDoc not allowed", func(t *testing.T) {
+		require.AppSchemaError(`APPLICATION test();
+			WORKSPACE MyWS (
+				TABLE t01 INHERITS sys.WDoc();
+				TABLE t02 INHERITS sys.WRecord();
+				TABLE t1 INHERITS sys.CDoc(
+					f1 ref(t01),
+					f2 ref(t02)
+				);
+			);`, "file.vsql:6:13: t01: reference to WDoc/WRecord",
+			"file.vsql:7:13: t02: reference to WDoc/WRecord")
+	})
 }

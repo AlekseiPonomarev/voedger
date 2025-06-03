@@ -321,20 +321,28 @@ func (a *aggregator) compareUint64(v1, v2 uint64, asc bool) bool {
 type sender struct {
 	pipeline.AsyncNOOP
 	responder          bus.IResponder
-	respWriter         bus.IResponseWriter
-	isArrayResponse    bool
-	contentType        string
 	rowsProcessorErrCh chan error
 }
 
-func (s *sender) DoAsync(_ context.Context, work pipeline.IWorkpiece) (outWork pipeline.IWorkpiece, err error) {
-	if !s.isArrayResponse {
-		return work, s.responder.Respond(bus.ResponseMeta{ContentType: s.contentType, StatusCode: http.StatusOK}, work.(objectBackedByMap).data)
-	}
+type arraySender struct {
+	sender
+	respWriter bus.IResponseWriter
+}
+
+type objectSender struct {
+	sender
+	contentType string
+}
+
+func (s *arraySender) DoAsync(_ context.Context, work pipeline.IWorkpiece) (outWork pipeline.IWorkpiece, err error) {
 	if s.respWriter == nil {
 		s.respWriter = s.responder.InitResponse(http.StatusOK)
 	}
 	return work, s.respWriter.Write(work.(objectBackedByMap).data)
+}
+
+func (s *objectSender) DoAsync(_ context.Context, work pipeline.IWorkpiece) (outWork pipeline.IWorkpiece, err error) {
+	return work, s.responder.Respond(bus.ResponseMeta{ContentType: s.contentType, StatusCode: http.StatusOK}, work.(objectBackedByMap).data)
 }
 func (s *sender) OnError(_ context.Context, err error) {
 	s.rowsProcessorErrCh <- coreutils.WrapSysError(err, http.StatusBadRequest)
@@ -624,14 +632,19 @@ func (i include) getRelations(ctx context.Context, work pipeline.IWorkpiece) (re
 	return
 }
 func (i include) checkField(parent map[string]interface{}, refFieldOrContainer string, refFieldOrContainerExpression []string) (err error) {
-	for _, field := range i.ad.Type(parent[appdef.SystemField_QName].(appdef.QName)).(appdef.IWithFields).RefFields() {
-		if field.Name() == refFieldOrContainer {
-			return nil
+	iType := i.ad.Type(parent[appdef.SystemField_QName].(appdef.QName))
+	if withFields, ok := iType.(appdef.IWithFields); ok {
+		for _, field := range withFields.RefFields() {
+			if field.Name() == refFieldOrContainer {
+				return nil
+			}
 		}
 	}
-	for _, container := range i.ad.Type(parent[appdef.SystemField_QName].(appdef.QName)).(appdef.IWithContainers).Containers() {
-		if container.Name() == refFieldOrContainer {
-			return nil
+	if withContainers, ok := iType.(appdef.IWithContainers); ok {
+		for _, field := range withContainers.Containers() {
+			if field.Name() == refFieldOrContainer {
+				return nil
+			}
 		}
 	}
 	return fmt.Errorf("field expression - '%s', '%s' - %w", strings.Join(refFieldOrContainerExpression, "."), refFieldOrContainer, errUnexpectedField)

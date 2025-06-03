@@ -14,7 +14,7 @@ import (
 	payloads "github.com/voedger/voedger/pkg/itokens-payloads"
 )
 
-// [~server.apiv2.auth/cmp.authRefreshHandler~impl]
+// [~server.authnz/cmp.authRefreshHandler~impl]
 func authRefreshHandler() apiPathHandler {
 	return apiPathHandler{
 		exec: func(ctx context.Context, qw *queryWork) (err error) {
@@ -44,7 +44,7 @@ func authRefreshHandler() apiPathHandler {
 				return err
 			}
 			expiresIn := gp.Duration.Seconds()
-			json := fmt.Sprintf(`{"PrincipalToken": "%s", "ExpiresIn": %d, "WSID": %d}`, newToken, int(expiresIn), qw.principalPayload.ProfileWSID)
+			json := fmt.Sprintf(`{"%s": "%s", "%s": %d, "%s": %d}`, fieldPrincipalToken, newToken, fieldExpiresIn, int(expiresIn), fieldWSID, qw.principalPayload.ProfileWSID)
 			return qw.msg.Responder().Respond(bus.ResponseMeta{ContentType: coreutils.ContentType_ApplicationJSON, StatusCode: http.StatusOK}, json)
 
 		},
