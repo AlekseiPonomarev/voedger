@@ -100,7 +100,6 @@ func provideExecQrySQLQuery(federation federation.IFederation, itokens itokens.I
 			}
 			return nil
 		}
-
 		stmt, err := sqlparser.Parse(op.CleanSQL)
 		if err != nil {
 			return err
@@ -131,6 +130,12 @@ func provideExecQrySQLQuery(federation federation.IFederation, itokens itokens.I
 
 		table := s.From[0].(*sqlparser.AliasedTableExpr).Expr.(sqlparser.TableName)
 		source := appdef.NewQName(table.Qualifier.String(), table.Name.String())
+		if source.Entity() == "blob" {
+			// FIXME: eliminate this hack
+			// sys.BLOB translates to sys.blob by vitess-sqlparser
+			// https://github.com/voedger/voedger/issues/3708
+			source = appdef.NewQName(appdef.SysPackage, "BLOB")
+		}
 
 		kind := appStructs.AppDef().Type(source).Kind()
 		if _, ok := appStructs.AppDef().Type(source).(appdef.IStructure); ok {

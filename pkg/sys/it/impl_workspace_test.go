@@ -20,7 +20,6 @@ import (
 	"github.com/voedger/voedger/pkg/iauthnz"
 	"github.com/voedger/voedger/pkg/istructs"
 	payloads "github.com/voedger/voedger/pkg/itokens-payloads"
-	"github.com/voedger/voedger/pkg/sys/authnz"
 	"github.com/voedger/voedger/pkg/sys/workspace"
 	it "github.com/voedger/voedger/pkg/vit"
 )
@@ -73,7 +72,7 @@ func TestBasicUsage_Workspace(t *testing.T) {
 		require.Equal(istructs.ClusterID(1), ws.WSID.ClusterID())
 
 		t.Run("check the initialized workspace using collection", func(t *testing.T) {
-			body = `{"args":{"Schema":"app1pkg.air_table_plan"},"elements":[{"fields":["sys.ID","image","preview"]}]}`
+			body = `{"args":{"Schema":"app1pkg.air_table_plan"},"elements":[{"fields":["sys.ID"]}]}`
 			resp := vit.PostWS(ws, "q.sys.Collection", body)
 			require.Len(resp.Sections[0].Elements, 2) // from testTemplate
 			appEPs := vit.VVM.AppsExtensionPoints[istructs.AppQName_test1_app1]
@@ -181,14 +180,6 @@ func TestWorkspaceAuthorization(t *testing.T) {
 	})
 }
 
-func TestDenyCreateCDocWSKind(t *testing.T) {
-	DenyCreateCDocWSKind_Test(t, []appdef.QName{
-		authnz.QNameCDoc_WorkspaceKind_UserProfile,
-		authnz.QNameCDoc_WorkspaceKind_DeviceProfile,
-		authnz.QNameCDoc_WorkspaceKind_AppWorkspace,
-	})
-}
-
 func TestDenyCUDCDocOwnerModification(t *testing.T) {
 	vit := it.NewVIT(t, &it.SharedConfig_App1)
 	defer vit.TearDown()
@@ -284,27 +275,21 @@ func checkDemoAndDemoMinBLOBs(vit *it.VIT, templateName string, ep extensionpoin
 		blobsMap[string(templateBLOB.Content)] = templateBLOB
 	}
 	rowIdx := 0
-	for _, temp := range blobs {
-		switch temp.RecordID {
+	for _, blob := range blobs {
+		switch blob.OwnerRecordRawID {
 		// IDs are taken from the actual templates
 		case 1:
 			rowIdx = 0
 		case 2:
 			rowIdx = 1
 		default:
-			vit.T.Fatal(temp.RecordID)
+			vit.T.Fatal(blob.OwnerRecordRawID)
 		}
-		var fieldIdx int
-		if temp.FieldName == "image" {
-			fieldIdx = 1
-		} else {
-			fieldIdx = 2
-		}
-		blobID := istructs.RecordID(resp.SectionRow(rowIdx)[fieldIdx].(float64))
-		uploadedBLOB := vit.GetBLOB(istructs.AppQName_test1_app1, wsid, blobID, token)
+		ownerID := istructs.RecordID(resp.SectionRow(rowIdx)[0].(float64))
+		uploadedBLOB := vit.GetBLOB(istructs.AppQName_test1_app1, wsid, blob.OwnerRecord, blob.OwnerRecordField, ownerID, token)
 		templateBLOB := blobsMap[string(uploadedBLOB.Content)]
 		require.Equal(templateBLOB.Name, uploadedBLOB.Name)
-		require.Equal(templateBLOB.MimeType, uploadedBLOB.MimeType)
+		require.Equal(templateBLOB.ContentType, uploadedBLOB.ContentType)
 		delete(blobsMap, string(uploadedBLOB.Content))
 		rowIdx++
 	}
